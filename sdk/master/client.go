@@ -16,9 +16,10 @@ package master
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -146,7 +147,7 @@ func (c *MasterClient) serveRequest(r *request) (repsData []byte, err error) {
 			continue
 		}
 		stateCode := resp.StatusCode
-		repsData, err = ioutil.ReadAll(resp.Body)
+		repsData, err = io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
 			log.LogErrorf("serveRequest: read http response body fail: err(%v)", err)
@@ -192,6 +193,17 @@ func (c *MasterClient) serveRequest(r *request) (repsData []byte, err error) {
 		}
 	}
 	return
+}
+
+func (c *MasterClient) sendRequest(r *request, rst interface{}) error {
+	buf, err := c.serveRequest(r)
+	if err != nil {
+		return err
+	}
+	if rst == nil {
+		return nil
+	}
+	return json.Unmarshal(buf, rst)
 }
 
 // Nodes returns all master addresses.
