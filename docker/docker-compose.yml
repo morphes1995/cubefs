@@ -37,6 +37,8 @@ services:
             - lcnode1
             - lcnode2
             - lcnode3
+            - flashnode1
+            - flashnode2
             - console1
             - nginx
         networks:
@@ -408,6 +410,45 @@ services:
         networks:
             extnetwork:
                 ipv4_address: 192.168.0.63
+
+    flashnode1:
+        image: ${IMAGE}
+        ports:
+            - "17510"
+            - "17520"
+            - 9500
+        volumes:
+            - ./bin:/cfs/bin:ro
+            - ${DiskPath:-./docker_data}/flashnode1/log:/cfs/log
+            - ./conf/flashnode.json:/cfs/conf/flashnode.json
+            - ./script/start_flashnode.sh:/cfs/script/start.sh
+        command: /bin/sh /cfs/script/start.sh
+        restart: on-failure
+        privileged: true
+        environment:
+            - TZ=Asia/Shanghai
+        networks:
+            extnetwork:
+                ipv4_address: 192.168.0.71
+    flashnode2:
+        image: ${IMAGE}
+        ports:
+            - "17510"
+            - "17520"
+            - 9500
+        volumes:
+            - ./bin:/cfs/bin:ro
+            - ${DiskPath:-./docker_data}/flashnode2/log:/cfs/log
+            - ./conf/flashnode.json:/cfs/conf/flashnode.json
+            - ./script/start_flashnode.sh:/cfs/script/start.sh
+        command: /bin/sh /cfs/script/start.sh
+        restart: on-failure
+        privileged: true
+        environment:
+            - TZ=Asia/Shanghai
+        networks:
+            extnetwork:
+                ipv4_address: 192.168.0.72
 
     console1:
         image: ${IMAGE}
