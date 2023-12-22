@@ -480,12 +480,12 @@ func (m *ClusterService) addRaftNode(ctx context.Context, args struct {
 
 // Turn on or off the automatic allocation of the data partitions.
 // If DisableAutoAllocate == off, then we WILL NOT automatically allocate new data partitions for the volume when:
-// 	1. the used space is below the max capacity,
-//	2. and the number of r&w data partition is less than 20.
+//  1. the used space is below the max capacity,
+//  2. and the number of r&w data partition is less than 20.
 //
 // If DisableAutoAllocate == on, then we WILL automatically allocate new data partitions for the volume when:
-// 	1. the used space is below the max capacity,
-//	2. and the number of r&w data partition is less than 20.
+//  1. the used space is below the max capacity,
+//  2. and the number of r&w data partition is less than 20.
 func (m *ClusterService) clusterFreeze(ctx context.Context, args struct {
 	Status bool
 }) (*proto.GeneralResp, error) {
@@ -620,6 +620,7 @@ func (m *ClusterService) makeClusterView() *proto.ClusterView {
 		MaxMetaPartitionID:   m.cluster.idAlloc.metaPartitionID,
 		MetaNodes:            make([]proto.NodeView, 0),
 		DataNodes:            make([]proto.NodeView, 0),
+		FlashNodes:           make([]proto.NodeView, 0),
 		VolStatInfo:          make([]*proto.VolStatInfo, 0),
 		BadPartitionIDs:      make([]proto.BadPartitionView, 0),
 		BadMetaPartitionIDs:  make([]proto.BadPartitionView, 0),
@@ -628,6 +629,7 @@ func (m *ClusterService) makeClusterView() *proto.ClusterView {
 	vols := m.cluster.allVolNames()
 	cv.MetaNodes = m.cluster.allMetaNodes()
 	cv.DataNodes = m.cluster.allDataNodes()
+	cv.FlashNodes = m.cluster.allFlashNodes()
 	cv.DataNodeStatInfo = m.cluster.dataNodeStatInfo
 	cv.MetaNodeStatInfo = m.cluster.metaNodeStatInfo
 	for _, name := range vols {
