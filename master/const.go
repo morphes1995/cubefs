@@ -131,9 +131,6 @@ const (
 	Periodic                   = "periodic"
 	DecommissionType           = "decommissionType"
 	decommissionDiskFactor     = "decommissionDiskFactor"
-	stateKey                   = "state"
-	versionKey                 = "version"
-	fgSlotsKey                 = "slots"
 )
 
 const (
