@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/cubefs/cubefs/sdk/meta/vol_replication"
 	"hash"
 	"io"
 	"os"
@@ -1194,6 +1195,7 @@ func (v *Volume) CompleteMultipart(path, multipartID string, multipartInfo *prot
 	// merge complete extent keys
 	var size uint64
 	var fileOffset uint64
+	var partSizes []string
 	if proto.IsCold(v.volType) {
 		completeObjExtentKeys := make([]proto.ObjExtentKey, 0)
 		for _, part := range parts {
@@ -1209,6 +1211,7 @@ func (v *Volume) CompleteMultipart(path, multipartID string, multipartInfo *prot
 				completeObjExtentKeys = append(completeObjExtentKeys, ek)
 			}
 			size += part.Size
+			partSizes = append(partSizes, strconv.FormatUint(part.Size, 10))
 		}
 		if err = v.mw.AppendObjExtentKeys(completeInodeInfo.Inode, completeObjExtentKeys); err != nil {
 			log.LogErrorf("CompleteMultipart: meta append extent keys fail: volume(%v) path(%v) multipartID(%v) inode(%v) err(%v)",
@@ -1231,6 +1234,7 @@ func (v *Volume) CompleteMultipart(path, multipartID string, multipartInfo *prot
 				completeExtentKeys = append(completeExtentKeys, ek)
 			}
 			size += part.Size
+			partSizes = append(partSizes, strconv.FormatUint(part.Size, 10))
 		}
 		if err = v.mw.AppendExtentKeys(completeInodeInfo.Inode, completeExtentKeys); err != nil {
 			log.LogErrorf("CompleteMultipart: meta append extent keys fail: volume(%v) path(%v) multipartID(%v) inode(%v) err(%v)",
@@ -1274,6 +1278,8 @@ func (v *Volume) CompleteMultipart(path, multipartID string, multipartInfo *prot
 		},
 	}
 	attrs[XAttrKeyOSSETag] = etagValue.Encode()
+	attrs[XAttrKeyOSSPartSizes] = strings.Join(partSizes, ",")
+
 	// set user modified system metadata, self defined metadata and tag
 	extend := multipartInfo.Extend
 	if len(extend) > 0 {
@@ -3185,4 +3191,86 @@ func (v *Volume) referenceExtentKey(oldInode, inode uint64) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func (v *Volume) tryReplicate(f *FSFileInfo) {
+	var (
+		err       error
+		targetIDs []string
+		attrInfo  *proto.XAttrInfo
+	)
+
+	if attrInfo, err = v.mw.XAttrGetAll_ll(f.Inode); err != nil {
+		log.LogErrorf("tryReplicate: meta get xattr failed : volume(%v) path(%v) inode(%v) err(%v)", v.name, f.Path, f.Inode, err)
+		return
+	}
+	if targetIDs = v.shouldObjectReplicated(f.Path, attrInfo.XAttrs); len(targetIDs) > 0 {
+		v.replicateObject(f, attrInfo.XAttrs, targetIDs)
+	}
+}
+
+func (v *Volume) shouldObjectReplicated(objPath string, meta map[string]string) (targetIds []string) {
+	var replicationStatus string
+	if _, exist := meta[VolumeReplicationStatus]; exist {
+		replicationStatus = meta[VolumeReplicationStatus]
+	}
+
+	if vol_replication.ReplicationStatusType(replicationStatus) == vol_replication.Replica {
+		return
+	}
+
+	return v.mw.ShouldObjectReplicated(objPath, meta)
+}
+
+func (v *Volume) replicateObject(f *FSFileInfo, metaData map[string]string, targetIDs []string) {
+	var wg sync.WaitGroup
+	var w *meta.ReplicationWrapper
+
+	size, err := safeConvertInt64ToUint64(f.Size)
+	if err != nil {
+		return
+	}
+
+	for _, id := range targetIDs {
+		w, err = v.mw.GetClient(id)
+		if err != nil {
+			continue
+		}
+
+		wg.Add(1)
+		go func(w *meta.ReplicationWrapper) {
+			defer wg.Done()
+			reader, writer := io.Pipe()
+			go func() {
+				err = v.readFile(f.Inode, size, f.Path, writer, 0, size)
+				if err != nil {
+					log.LogErrorf("replicateObject: read srcObj err(%v): srcVol(%v) path(%v)",
+						err, v.name, f.Path)
+				}
+				writer.CloseWithError(err)
+			}()
+
+			replicationStatus := vol_replication.Complete
+			etag := ParseETagValue(f.ETag)
+			if etag.PartNum > 0 {
+				//  object was uploaded in parts
+				err = replicateMultiPartsObject(v.name, f, w, metaData, reader)
+			} else {
+				// object was uploaded in whole
+				err = replicateObject(v.name, f, w, metaData, reader)
+			}
+
+			if err != nil {
+				replicationStatus = vol_replication.Failed
+			}
+
+			// update object replication status form Pending to Complete/Failed
+			if err = v.SetXAttr(f.Path, VolumeReplicationStatus, []byte(replicationStatus.String()), false); err != nil {
+				log.LogErrorf("failed update object[%v/%v]'s replication status to [%v] ", v.name, f.Path, replicationStatus.String())
+			}
+
+		}(w)
+	}
+	wg.Wait()
+
 }

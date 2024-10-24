@@ -60,6 +60,7 @@ const (
 	AdminVolSetDpRepairBlockSize              = "/vol/setDpRepairBlockSize"
 	AdminCreateVol                            = "/admin/createVol"
 	AdminGetVol                               = "/admin/getVol"
+	AdminVolReplicationTargetAdd              = "/vol/replication/add"
 	AdminClusterFreeze                        = "/cluster/freeze"
 	AdminClusterForbidMpDecommission          = "/cluster/forbidMetaPartitionDecommission"
 	AdminClusterStat                          = "/cluster/stat"

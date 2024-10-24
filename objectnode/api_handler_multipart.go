@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
+	"github.com/cubefs/cubefs/sdk/meta/vol_replication"
 	"io"
 	"net/http"
 	"sort"
@@ -99,6 +100,10 @@ func (o *ObjectNode) createMultipleUploadHandler(w http.ResponseWriter, r *http.
 
 	// Checking user-defined metadata
 	metadata := ParseUserDefinedMetadata(r.Header)
+
+	if targetIds := vol.shouldObjectReplicated(param.Object(), metadata); len(targetIds) > 0 {
+		metadata[VolumeReplicationStatus] = vol_replication.Pending.String()
+	}
 
 	// Check 'x-amz-tagging' header
 	var tagging *Tagging
@@ -773,6 +778,8 @@ func (o *ObjectNode) completeMultipartUploadHandler(w http.ResponseWriter, r *ht
 		}
 		return
 	}
+
+	vol.tryReplicate(fsFileInfo)
 
 	completeResult := CompleteMultipartResult{
 		Bucket: param.Bucket(),

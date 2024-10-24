@@ -17,6 +17,7 @@ package master
 import (
 	"encoding/json"
 	"fmt"
+	uuid2 "github.com/google/uuid"
 	"math"
 	"runtime/debug"
 	"strconv"
@@ -58,6 +59,8 @@ type VolVarargs struct {
 	enableAutoDpMetaRepair  bool
 	accessTimeValidInterval int64
 	enablePersistAccessTime bool
+
+	replicationTargets []ReplicationTarget
 }
 
 type CacheSubItem struct {
@@ -157,6 +160,8 @@ type Vol struct {
 
 	mpsLock *mpsLockManager
 	volLock sync.RWMutex
+
+	replicationTargets []ReplicationTarget
 }
 
 func newVol(vv volValue) (vol *Vol) {
@@ -200,6 +205,8 @@ func newVol(vv volValue) (vol *Vol) {
 	vol.CacheLRUInterval = vv.CacheLRUInterval
 	vol.CacheRule = vv.CacheRule
 	vol.Status = vv.Status
+
+	vol.replicationTargets = vv.ReplicationTargets
 
 	limitQosVal := &qosArgs{
 		qosEnable:     vv.VolQosEnable,
@@ -1639,6 +1646,8 @@ func setVolFromArgs(args *VolVarargs, vol *Vol) {
 	vol.AccessTimeInterval = args.accessTimeInterval
 	vol.EnableAutoMetaRepair.Store(args.enableAutoDpMetaRepair)
 	vol.EnablePersistAccessTime = args.enablePersistAccessTime
+
+	vol.replicationTargets = args.replicationTargets
 }
 
 func getVolVarargs(vol *Vol) *VolVarargs {
@@ -1681,6 +1690,7 @@ func getVolVarargs(vol *Vol) *VolVarargs {
 		trashInterval:           vol.TrashInterval,
 		enablePersistAccessTime: vol.EnablePersistAccessTime,
 		enableAutoDpMetaRepair:  vol.EnableAutoMetaRepair.Load(),
+		replicationTargets:      vol.replicationTargets,
 	}
 }
 
@@ -1750,4 +1760,20 @@ func (vol *Vol) checkDataReplicaMeta(c *Cluster) (cnt int) {
 		checkMetaDpWg.Wait()
 	}
 	return
+}
+
+func (vol *Vol) getReplicationTargetID(target *ReplicationTarget) (id string, exist bool) {
+	vol.volLock.RLock()
+	defer vol.volLock.RUnlock()
+
+	for _, existTarget := range vol.replicationTargets {
+		if existTarget.TargetVolume == target.TargetVolume &&
+			target.URL().String() == target.URL().String() &&
+			existTarget.AccessKey == target.AccessKey {
+			return existTarget.ID, true
+		}
+
+	}
+	u, _ := uuid2.NewUUID()
+	return u.String(), false
 }
