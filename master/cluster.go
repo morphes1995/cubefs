@@ -3334,7 +3334,7 @@ func (c *Cluster) updateVol(name, authKey string, newArgs *VolVarargs) (err erro
 		serverAuthKey string
 		volUsedSpace  uint64
 		oldArgs       *VolVarargs
-		targetNewAdd  ReplicationTarget
+		targetNewAdd  *proto.ReplicationTarget
 	)
 
 	if vol, err = c.getVol(name); err != nil {

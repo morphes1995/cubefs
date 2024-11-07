@@ -248,7 +248,7 @@ func parseVolName(r *http.Request) (name string, err error) {
 	return
 }
 
-func parseVolReplicationAddParams(r *http.Request, authKey *string, replicationTarget *ReplicationTarget) (err error) {
+func parseVolReplicationAddParams(r *http.Request, authKey *string, replicationTarget *proto.ReplicationTarget) (err error) {
 	*authKey = r.FormValue("authKey")
 
 	replicationTarget.SourceVolume = r.FormValue("sourceVolume")

@@ -60,7 +60,7 @@ type VolVarargs struct {
 	accessTimeValidInterval int64
 	enablePersistAccessTime bool
 
-	replicationTargets []ReplicationTarget
+	replicationTargets []*proto.ReplicationTarget
 }
 
 type CacheSubItem struct {
@@ -161,7 +161,7 @@ type Vol struct {
 	mpsLock *mpsLockManager
 	volLock sync.RWMutex
 
-	replicationTargets []ReplicationTarget
+	replicationTargets []*proto.ReplicationTarget
 }
 
 func newVol(vv volValue) (vol *Vol) {
@@ -1762,7 +1762,7 @@ func (vol *Vol) checkDataReplicaMeta(c *Cluster) (cnt int) {
 	return
 }
 
-func (vol *Vol) getReplicationTargetID(target *ReplicationTarget) (id string, exist bool) {
+func (vol *Vol) getReplicationTargetID(target *proto.ReplicationTarget) (id string, exist bool) {
 	vol.volLock.RLock()
 	defer vol.volLock.RUnlock()
 

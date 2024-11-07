@@ -984,6 +984,8 @@ func (v *Volume) InitMultipart(path string, opt *PutFileOption) (multipartID str
 		log.LogErrorf("InitMultipart: meta init multipart fail: path(%v) err(%v)", path, err)
 		return "", err
 	}
+	log.LogDebugf("InitMultipart: meta init multipart: volume(%v) path(%v) multipartID(%v) path(%v)",
+		v.name, path, multipartID, path)
 	return multipartID, nil
 }
 
@@ -3210,16 +3212,7 @@ func (v *Volume) tryReplicate(f *FSFileInfo) {
 }
 
 func (v *Volume) shouldObjectReplicated(objPath string, meta map[string]string) (targetIds []string) {
-	var replicationStatus string
-	if _, exist := meta[VolumeReplicationStatus]; exist {
-		replicationStatus = meta[VolumeReplicationStatus]
-	}
-
-	if vol_replication.ReplicationStatusType(replicationStatus) == vol_replication.Replica {
-		return
-	}
-
-	return v.mw.ShouldObjectReplicated(objPath, meta)
+	return v.mw.ShouldObjectReplicated(objPath, meta[VolumeReplicationStatus])
 }
 
 func (v *Volume) replicateObject(f *FSFileInfo, metaData map[string]string, targetIDs []string) {
@@ -3254,10 +3247,10 @@ func (v *Volume) replicateObject(f *FSFileInfo, metaData map[string]string, targ
 			etag := ParseETagValue(f.ETag)
 			if etag.PartNum > 0 {
 				//  object was uploaded in parts
-				err = replicateMultiPartsObject(v.name, f, w, metaData, reader)
+				err = ReplicateMultiPartsObject(v.name, f.Path, f.Size, w, metaData, reader)
 			} else {
 				// object was uploaded in whole
-				err = replicateObject(v.name, f, w, metaData, reader)
+				err = ReplicateObject(v.name, f.Path, f.Size, f.ETag, w, metaData, reader)
 			}
 
 			if err != nil {

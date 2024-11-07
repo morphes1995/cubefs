@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
-	"github.com/cubefs/cubefs/master"
+	"github.com/cubefs/cubefs/sdk/meta/vol_replication"
 	"github.com/cubefs/cubefs/util/s3"
 	"strings"
 	"sync"
@@ -453,19 +453,6 @@ func statusToErrno(status int) error {
 	return syscall.EIO
 }
 
-//func (mw *MetaWrapper) RTRLock(){
-//	mw.rtLock.RLock()
-//}
-//func (mw *MetaWrapper) RTRunLock(){
-//	mw.rtLock.RUnlock()
-//}
-//func (mw *MetaWrapper) RTLock(){
-//	mw.rtLock.Lock()
-//}
-//func (mw *MetaWrapper) RTunlock(){
-//	mw.rtLock.Unlock()
-//}
-
 func (mw *MetaWrapper) GetClient(id string) (w *ReplicationWrapper, err error) {
 	mw.rtLock.RLock()
 	mw.rtLock.RUnlock()
@@ -477,9 +464,10 @@ func (mw *MetaWrapper) GetClient(id string) (w *ReplicationWrapper, err error) {
 	return nil, fmt.Errorf("replication tartet [%s] did not find ! ", id)
 }
 
-func (mw *MetaWrapper) updateReplicationTargets(targets []byte) (err error) {
+func (mw *MetaWrapper) updateReplicationTargets(targets []byte) {
 	var (
-		newTargets      []master.ReplicationTarget
+		err             error
+		newTargets      []proto.ReplicationTarget
 		newTargetsID    map[string]struct{}
 		deleteTargetsID []string
 	)
@@ -493,7 +481,7 @@ func (mw *MetaWrapper) updateReplicationTargets(targets []byte) (err error) {
 
 	newTargetsID = make(map[string]struct{}, len(targets))
 	if err = json.Unmarshal(targets, &newTargets); err != nil {
-		return err
+		return
 	}
 
 	for _, target := range newTargets {
@@ -503,12 +491,13 @@ func (mw *MetaWrapper) updateReplicationTargets(targets []byte) (err error) {
 			client := s3.CreateReplicationTargetClient(
 				target.Endpoint, target.AccessKey,
 				target.SecretKey, target.Secure)
+
 			_, err = client.HeadBucket(&awss3.HeadBucketInput{
 				Bucket: aws.String(target.TargetVolume),
 			})
 
 			if err != nil {
-				return
+				log.LogWarnf("vol %s replication may unreachable !", mw.volname)
 			}
 
 			mw.replicationTargets[target.ID] = &ReplicationWrapper{Client: client, TargetConfig: target}
@@ -532,9 +521,15 @@ func (mw *MetaWrapper) updateReplicationTargets(targets []byte) (err error) {
 	return
 }
 
-func (mw *MetaWrapper) ShouldObjectReplicated(path string, metadata map[string]string) (satisfiedIDS []string) {
+func (mw *MetaWrapper) ShouldObjectReplicated(path, replicationStatus string) (satisfiedIDS []string) {
+	if replicationStatus != "" &&
+		replicationStatus != vol_replication.Failed.String() &&
+		replicationStatus != vol_replication.Pending.String() {
+		return
+	}
+
 	mw.rtLock.RLock()
-	mw.rtLock.RUnlock()
+	defer mw.rtLock.RUnlock()
 
 	for id, _ := range mw.replicationTargets {
 		// TODO add more filter criteria

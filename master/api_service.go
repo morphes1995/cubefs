@@ -2375,7 +2375,7 @@ func (m *Server) volReplicationTargetAdd(w http.ResponseWriter, r *http.Request)
 		authKey           string
 		id                string
 		exists            bool
-		replicationTarget ReplicationTarget
+		replicationTarget proto.ReplicationTarget
 		vol               *Vol
 	)
 	metric := exporter.NewTPCnt(apiToMetricsName(proto.AdminVolReplicationTargetAdd))
@@ -2413,7 +2413,7 @@ func (m *Server) volReplicationTargetAdd(w http.ResponseWriter, r *http.Request)
 	}
 
 	newArgs := getVolVarargs(vol)
-	newArgs.replicationTargets = append(newArgs.replicationTargets, replicationTarget)
+	newArgs.replicationTargets = append(newArgs.replicationTargets, &replicationTarget)
 	if err = m.cluster.updateVol(replicationTarget.SourceVolume, authKey, newArgs); err != nil {
 		sendErrReply(w, r, newErrHTTPReply(err))
 		return

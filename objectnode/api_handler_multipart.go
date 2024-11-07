@@ -747,8 +747,8 @@ func (o *ObjectNode) completeMultipartUploadHandler(w http.ResponseWriter, r *ht
 	multipartInfo, err := vol.mw.GetMultipart_ll(param.object, uploadId)
 	span.AppendTrackLog("part.r", start, err)
 	if err != nil {
-		log.LogErrorf("completeMultipartUploadHandler: meta get multipart fail: requestID(%v) path(%v) err(%v)",
-			GetRequestID(r), param.object, err)
+		log.LogErrorf("completeMultipartUploadHandler: meta get multipart fail: requestID(%v) path(%v), uploadID(%v) err(%v)",
+			GetRequestID(r), param.object, uploadId, err)
 		if err == syscall.ENOENT {
 			errorCode = NoSuchUpload
 			return

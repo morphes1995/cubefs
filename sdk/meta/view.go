@@ -185,9 +185,7 @@ func (mw *MetaWrapper) updateVolStatInfo() (err error) {
 	}
 	log.LogInfof("VolStatInfo: info(%v), disableTrash(%v)", info, mw.disableTrash)
 
-	if err = mw.updateReplicationTargets(info.ReplicationTargets); err != nil {
-		return
-	}
+	mw.updateReplicationTargets(info.ReplicationTargets)
 
 	return
 }

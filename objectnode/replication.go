@@ -18,29 +18,30 @@ import (
 	"time"
 )
 
-func replicateObject(volName string, f *FSFileInfo, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (err error) {
+func ReplicateObject(volName string, path string, size int64, etagStr string, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (err error) {
 	var out *s3.PutObjectOutput
 	var input *s3.PutObjectInput
 	var md5SumIsMatch bool
 
-	if input, err = buildPutObjectInput(f, w, metaData, reader); err != nil {
-		log.LogErrorf("buildPutObjectInputMetadata: object: %v/%v failed to replicate to %v , err: %v", volName, f.Path, w.TargetConfig.ID, err)
+	if input, err = buildPutObjectInput(path, size, etagStr, w, metaData, reader); err != nil {
+		log.LogErrorf("buildPutObjectInputMetadata: object: %v/%v failed to replicate to %v , err: %v", volName, path, w.TargetConfig.ID, err)
 		return
 	}
 	out, err = w.Client.PutObject(input)
 	if err != nil {
-		log.LogErrorf("PutObject: object: %v/%v failed to replicate to %v , err: %v", volName, f.Path, w.TargetConfig.ID, err)
+		log.LogErrorf("PutObject: object: %v/%v failed to replicate to %v , err: %v", volName, path, w.TargetConfig.ID, err)
+		return
 	}
 
-	md5SumIsMatch = *out.ETag == wrapUnescapedQuot(f.ETag)
+	md5SumIsMatch = *out.ETag == wrapUnescapedQuot(etagStr)
 	if !md5SumIsMatch {
-		return fmt.Errorf("object: %v/%v failed to replicate to %v , md5sum mismatch ! ", volName, f.Path, w.TargetConfig.ID)
+		return fmt.Errorf("object: %v/%v failed to replicate to %v , md5sum mismatch ! ", volName, path, w.TargetConfig.ID)
 	}
 
 	return nil
 }
 
-func buildPutObjectInput(f *FSFileInfo, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (input *s3.PutObjectInput, err error) {
+func buildPutObjectInput(path string, size int64, etagStr string, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (input *s3.PutObjectInput, err error) {
 	var (
 		attrsCopy map[string]string
 		etagBytes []byte
@@ -56,14 +57,15 @@ func buildPutObjectInput(f *FSFileInfo, w *meta.ReplicationWrapper, metaData map
 	}
 
 	input = &s3.PutObjectInput{
-		Bucket:   aws.String(w.TargetConfig.TargetVolume),
-		Key:      aws.String(f.Path),
-		Body:     aws.ReadSeekCloser(reader),
-		Metadata: map[string]*string{},
+		Bucket:        aws.String(w.TargetConfig.TargetVolume),
+		Key:           aws.String(path),
+		Body:          aws.ReadSeekCloser(reader),
+		ContentLength: aws.Int64(size),
+		Metadata:      map[string]*string{},
 	}
 
 	// header
-	etag = ParseETagValue(f.ETag)
+	etag = ParseETagValue(etagStr)
 	if etagBytes, err = hex.DecodeString(etag.Value); err != nil {
 		return nil, err
 	}
@@ -92,7 +94,7 @@ func buildPutObjectInput(f *FSFileInfo, w *meta.ReplicationWrapper, metaData map
 	if _, exist := attrsCopy[XAttrKeyOSSExpires]; exist {
 		var t time.Time
 		if t, err = time.Parse(RFC1123Format, attrsCopy[XAttrKeyOSSExpires]); err != nil {
-			log.LogErrorf("invalid expires format when replicate object [%v] , err: %v", f.Path, err)
+			log.LogErrorf("invalid expires format when replicate object [%v] , err: %v", path, err)
 			return nil, err
 		}
 		input.Expires = aws.Time(t)
@@ -114,7 +116,7 @@ func buildPutObjectInput(f *FSFileInfo, w *meta.ReplicationWrapper, metaData map
 	return input, nil
 }
 
-func replicateMultiPartsObject(volName string, f *FSFileInfo, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (err error) {
+func ReplicateMultiPartsObject(volName string, path string, size int64, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (err error) {
 	var (
 		sizes     []uint64
 		totalSize uint64
@@ -128,7 +130,7 @@ func replicateMultiPartsObject(volName string, f *FSFileInfo, w *meta.Replicatio
 	)
 
 	if _, exist := metaData[XAttrKeyOSSPartSizes]; !exist {
-		return fmt.Errorf("replicateMultiPartsObject: object %v/%v  part sizes not found ! ", volName, f.Path)
+		return fmt.Errorf("replicateMultiPartsObject: object %v/%v  part sizes not found ! ", volName, path)
 	}
 	partSizes := metaData[XAttrKeyOSSPartSizes]
 	sizesStr := strings.Split(partSizes, ",")
@@ -140,12 +142,12 @@ func replicateMultiPartsObject(volName string, f *FSFileInfo, w *meta.Replicatio
 		sizes = append(sizes, s)
 		totalSize += s
 	}
-	if totalSize != uint64(f.Size) {
-		return fmt.Errorf("object %v/%v bad XAttrKeyOSSPartSizes, total size %v, actually is %v", volName, f.Path, totalSize, f.Size)
+	if totalSize != uint64(size) {
+		return fmt.Errorf("object %v/%v bad XAttrKeyOSSPartSizes, total size %v, actually is %v", volName, path, totalSize, size)
 
 	}
 
-	if input, err = buildMultipartUploadInput(f, w, metaData); err != nil {
+	if input, err = buildMultipartUploadInput(path, w, metaData); err != nil {
 		return
 	}
 	attempts := 1
@@ -154,6 +156,7 @@ func replicateMultiPartsObject(volName string, f *FSFileInfo, w *meta.Replicatio
 		if err == nil {
 			break
 		}
+		log.LogErrorf("create multipart upload err when replicate object [%v] , err: %v", path, err)
 		attempts++
 		time.Sleep(time.Duration(rand.Int63n(int64(time.Second))))
 	}
@@ -250,10 +253,10 @@ func adaptReader(reader *io.PipeReader, size uint64) (io.Reader, error) {
 	return bytes.NewReader(buffer), nil
 }
 
-func buildMultipartUploadInput(f *FSFileInfo, w *meta.ReplicationWrapper, metaData map[string]string) (input *s3.CreateMultipartUploadInput, err error) {
+func buildMultipartUploadInput(path string, w *meta.ReplicationWrapper, metaData map[string]string) (input *s3.CreateMultipartUploadInput, err error) {
 	input = &s3.CreateMultipartUploadInput{
 		Bucket:   aws.String(w.TargetConfig.TargetVolume),
-		Key:      aws.String(f.Path),
+		Key:      aws.String(path),
 		Metadata: map[string]*string{},
 	}
 
@@ -289,7 +292,7 @@ func buildMultipartUploadInput(f *FSFileInfo, w *meta.ReplicationWrapper, metaDa
 	if _, exist := attrsCopy[XAttrKeyOSSExpires]; exist {
 		var t time.Time
 		if t, err = time.Parse(RFC1123Format, attrsCopy[XAttrKeyOSSExpires]); err != nil {
-			log.LogErrorf("invalid expires format when replicate object [%v] , err: %v", f.Path, err)
+			log.LogErrorf("invalid expires format when replicate object [%v] , err: %v", path, err)
 			return nil, err
 		}
 		input.Expires = aws.Time(t)

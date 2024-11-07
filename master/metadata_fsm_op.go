@@ -329,7 +329,7 @@ type volValue struct {
 	DpRepairBlockSize    uint64
 	EnableAutoMetaRepair bool
 
-	ReplicationTargets []ReplicationTarget
+	ReplicationTargets []*bsProto.ReplicationTarget
 }
 
 func (v *volValue) Bytes() (raw []byte, err error) {

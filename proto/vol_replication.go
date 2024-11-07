@@ -1,8 +1,22 @@
-package master
+package proto
 
 import (
 	"net/url"
 )
+
+type ScanStatistics struct {
+	TraverseDone     bool
+	TraverseStatus   string
+	Done             bool
+	FileHandleStatus string
+
+	TotalInodeScannedNum  int64
+	FileScannedNum        int64
+	DirScannedNum         int64
+	ErrorSkippedNum       int64
+	FailedObjectsDetected int64
+	FailedObjectsHealed   int64
+}
 
 type ReplicationTarget struct {
 	ID              string `json:"id,omitempty"`
@@ -14,6 +28,7 @@ type ReplicationTarget struct {
 	Region          string `json:"region,omitempty"`
 	Secure          bool   `json:"secure"`
 	ReplicationSync bool   `json:"replicationSync"`
+	Status          bool   `json:"status"`
 }
 
 func (t ReplicationTarget) URL() *url.URL {

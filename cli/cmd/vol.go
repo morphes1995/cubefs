@@ -16,6 +16,13 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/cubefs/cubefs/objectnode"
+	"github.com/cubefs/cubefs/proto"
+	"github.com/cubefs/cubefs/sdk/master"
+	"github.com/cubefs/cubefs/util"
+	"github.com/cubefs/cubefs/util/print_util"
+	"github.com/cubefs/cubefs/util/strutil"
+	"github.com/spf13/cobra"
 	"net/url"
 	"path"
 	"regexp"
@@ -23,12 +30,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/cubefs/cubefs/proto"
-	"github.com/cubefs/cubefs/sdk/master"
-	"github.com/cubefs/cubefs/util"
-	"github.com/cubefs/cubefs/util/strutil"
-	"github.com/spf13/cobra"
 )
 
 const (
@@ -278,6 +279,7 @@ func newVolReplicationCmd(client *master.MasterClient) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newVolReplicationAddCmd(client),
+		newVolReplicationHealCmd(client),
 	)
 	return cmd
 }
@@ -313,13 +315,13 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 
 			defer func() {
 				if err != nil {
-					errout("Error: %v\n", err)
+					errout(err)
 				}
 			}()
 
 			accessKey, secretKey, targetVolume, endpoint, secure, err = parseTargetParams(optTargetBucket)
 			if err != nil {
-				errout("Error: %v\n", err)
+				errout(err)
 				return
 			}
 
@@ -333,6 +335,93 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 
 	cmd.Flags().StringVar(&optTargetBucket, "target-bucket", "", "Specify target bucket which the data will be replicated to")
 	return cmd
+}
+
+const (
+	cmdVolReplicationCheckUse   = "heal [source bucket]"
+	cmdVolReplicationCheckShort = "heal object failed to replicate in the bucket"
+)
+
+func newVolReplicationHealCmd(client *master.MasterClient) *cobra.Command {
+	var firstPrint bool
+	var dryRun bool
+
+	var cmd = &cobra.Command{
+		Use:   cmdVolReplicationCheckUse,
+		Short: cmdVolReplicationCheckShort,
+		Args:  cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			var err error
+			var sourceVolName = args[0]
+			defer func() {
+				if err != nil {
+					errout(err)
+				}
+			}()
+			if err != nil {
+				errout(err)
+				return
+			}
+
+			currStatC := make(chan proto.ScanStatistics, 100)
+			stopC := make(chan bool)
+			task, err := objectnode.NewReplicationCheckTask(client.GetMasterAddresses(), sourceVolName, dryRun, currStatC, stopC)
+			if err != nil {
+				errout(err)
+				return
+			}
+			if err = task.Start(); err != nil {
+				errout(err)
+				return
+			}
+
+			// wait for completion
+			firstPrint = true
+			for {
+				select {
+				case stat := <-currStatC:
+					printHealProgress(stat, firstPrint)
+					firstPrint = false
+					if stat.Done {
+						stopC <- true
+						printHealProgress(stat, firstPrint)
+						return
+					}
+				}
+			}
+
+		},
+	}
+
+	cmd.Flags().BoolVarP(&dryRun, "dry-run", "", false, "Answer yes for all questions")
+
+	return cmd
+}
+
+func printHealProgress(stat proto.ScanStatistics, firstPrint bool) {
+	type printStat struct {
+		DirScannedNum         int64 `table:"dir scanned"`
+		FileScannedNum        int64 `table:"file scanned"`
+		FailedObjectsDetected int64 `table:"file failed to replicate"`
+		FailedObjectsHealed   int64 `table:"file replication healed"`
+	}
+
+	if !firstPrint {
+		RewindLines(5)
+	}
+	print_util.OutputA([]printStat{{
+		DirScannedNum:         stat.DirScannedNum,
+		FileScannedNum:        stat.FileScannedNum,
+		FailedObjectsDetected: stat.FailedObjectsDetected,
+		FailedObjectsHealed:   stat.FailedObjectsHealed,
+	}})
+}
+
+// RewindLines - uses terminal escape symbols to clear and rewind  upwards on the console for `n` lines.
+func RewindLines(n int) {
+	for i := 0; i < n; i++ {
+		fmt.Printf("\033[1A\033[K")
+	}
 }
 
 var (
