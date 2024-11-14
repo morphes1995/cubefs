@@ -15,6 +15,8 @@
 package cmd
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/cubefs/cubefs/objectnode"
 	"github.com/cubefs/cubefs/proto"
@@ -279,6 +281,8 @@ func newVolReplicationCmd(client *master.MasterClient) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newVolReplicationAddCmd(client),
+		newVolReplicationListCmd(client),
+		newVolReplicationRemoveCmd(client),
 		newVolReplicationHealCmd(client),
 	)
 	return cmd
@@ -291,6 +295,7 @@ const (
 
 func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 	var optTargetBucket string
+	var optPrefix string
 	var cmd = &cobra.Command{
 		Use:   cmdVolReplicationAddUse,
 		Short: cmdVolReplicationAddShort,
@@ -313,19 +318,14 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 				return
 			}
 
-			defer func() {
-				if err != nil {
-					errout(err)
-				}
-			}()
-
 			accessKey, secretKey, targetVolume, endpoint, secure, err = parseTargetParams(optTargetBucket)
 			if err != nil {
 				errout(err)
 				return
 			}
 
-			if id, err = client.AdminAPI().VolReplicationTargetAdd(vv, sourceVolName, endpoint, accessKey, secretKey, targetVolume, secure); err != nil {
+			if id, err = client.AdminAPI().VolReplicationTargetAdd(vv, sourceVolName, endpoint, accessKey, secretKey, targetVolume, optPrefix, secure); err != nil {
+				errout(err)
 				return
 			}
 
@@ -334,6 +334,92 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&optTargetBucket, "target-bucket", "", "Specify target bucket which the data will be replicated to")
+	cmd.Flags().StringVar(&optPrefix, "prefix", "", "Specify the prefix the object path start with which should to be replicated")
+	return cmd
+}
+
+const (
+	cmdVolReplicationListUse   = "list [source bucket]"
+	cmdVolReplicationListShort = "show  Volume replication targets info"
+)
+
+func newVolReplicationListCmd(client *master.MasterClient) *cobra.Command {
+	var cmd = &cobra.Command{
+		Use:   cmdVolReplicationListUse,
+		Short: cmdVolReplicationListShort,
+		Args:  cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			var err error
+			var targets []proto.ReplicationTarget
+			var sourceVolName = args[0]
+			var vv *proto.SimpleVolView
+			if vv, err = client.AdminAPI().GetVolumeSimpleInfo(sourceVolName); err != nil {
+				errout(err)
+				return
+			}
+
+			if vv.ReplicationTargets == nil || len(vv.ReplicationTargets) == 0 {
+				return
+			}
+			if err = json.Unmarshal(vv.ReplicationTargets, &targets); err != nil {
+				errout(err)
+				return
+			}
+
+			stdout(replicationTargetListStr(targets))
+		},
+	}
+	return cmd
+}
+
+func replicationTargetListStr(targets []proto.ReplicationTarget) string {
+	sb := strings.Builder{}
+	for _, target := range targets {
+		sb.WriteString(fmt.Sprintf("  ID           : %v\n", target.ID))
+		sb.WriteString(fmt.Sprintf("  Endpoint     : %v\n", target.Endpoint))
+		sb.WriteString(fmt.Sprintf("  Region       : %v\n", target.Region))
+		sb.WriteString(fmt.Sprintf("  TargetVolume : %v\n", target.TargetVolume))
+		sb.WriteString(fmt.Sprintf("  Prefix       : %v\n", target.Prefix))
+
+		sb.WriteString(fmt.Sprintf("  AccessKey    : %v\n", target.AccessKey))
+		sb.WriteString(fmt.Sprintf("  SecretKey    : %v\n", target.SecretKey))
+		sb.WriteString(fmt.Sprintf("  Sync         : %v\n", target.ReplicationSync))
+		sb.WriteString(fmt.Sprintf("  Status       : %v\n", target.Status))
+		sb.WriteString(fmt.Sprintf("\n"))
+	}
+
+	return sb.String()
+}
+
+const (
+	cmdVolReplicationRemoveUse   = "remove [source bucket]"
+	cmdVolReplicationRemoveShort = "Remove the specified Volume replication target"
+)
+
+func newVolReplicationRemoveCmd(client *master.MasterClient) *cobra.Command {
+	var targetID string
+	var cmd = &cobra.Command{
+		Use:   cmdVolReplicationRemoveUse,
+		Short: cmdVolReplicationRemoveShort,
+		Args:  cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			var err error
+			var sourceVolName = args[0]
+
+			if len(targetID) == 0 {
+				errout(errors.New("target Id must be specified! "))
+				return
+			}
+			if err = client.AdminAPI().VolReplicationTargetRemove(sourceVolName, targetID); err != nil {
+				errout(err)
+				return
+			}
+			stdout(targetID + " deleted successfully")
+
+		},
+	}
+
+	cmd.Flags().StringVar(&targetID, "targetId", "", "Id of replication target need to be deleted")
 	return cmd
 }
 
@@ -353,13 +439,15 @@ func newVolReplicationHealCmd(client *master.MasterClient) *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			var err error
 			var sourceVolName = args[0]
-			defer func() {
-				if err != nil {
-					errout(err)
-				}
-			}()
-			if err != nil {
+
+			var vv *proto.SimpleVolView
+			if vv, err = client.AdminAPI().GetVolumeSimpleInfo(sourceVolName); err != nil {
 				errout(err)
+				return
+			}
+
+			if vv.ReplicationTargets == nil || len(vv.ReplicationTargets) == 0 {
+				errout(errors.New("no replication target configured of this volume "))
 				return
 			}
 

@@ -421,6 +421,12 @@ func (t *ReplicationCheckTask) read(volume string, inode, inodeSize uint64, path
 	return nil
 }
 
-func (t *ReplicationCheckTask) GetScanStartPrefix() string {
-	return ""
+func (t *ReplicationCheckTask) GetScanStartPrefix() (commonPrefix string) {
+	prefixes := t.mw.GetPrefixes()
+
+	if len(prefixes) == 0 {
+		return
+	}
+
+	return prefixes[0]
 }

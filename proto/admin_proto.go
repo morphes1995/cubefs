@@ -61,6 +61,7 @@ const (
 	AdminCreateVol                            = "/admin/createVol"
 	AdminGetVol                               = "/admin/getVol"
 	AdminVolReplicationTargetAdd              = "/vol/replication/add"
+	AdminVolReplicationTargetRemove           = "/vol/replication/remove"
 	AdminClusterFreeze                        = "/cluster/freeze"
 	AdminClusterForbidMpDecommission          = "/cluster/forbidMetaPartitionDecommission"
 	AdminClusterStat                          = "/cluster/stat"
@@ -1180,6 +1181,8 @@ type SimpleVolView struct {
 	EnableAutoDpMetaRepair  bool
 	AccessTimeInterval      int64
 	EnablePersistAccessTime bool
+
+	ReplicationTargets []byte
 }
 
 type NodeSetInfo struct {

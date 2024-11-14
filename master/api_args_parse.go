@@ -262,11 +262,25 @@ func parseVolReplicationAddParams(r *http.Request, authKey *string, replicationT
 		return
 	}
 
+	replicationTarget.Prefix = strings.TrimSuffix(strings.TrimPrefix(r.FormValue("prefix"), "/"), "/")
 	replicationTarget.Endpoint = r.FormValue("endpoint")
 	replicationTarget.AccessKey = r.FormValue("accessKey")
 	replicationTarget.SecretKey = r.FormValue("secretKey")
 	if replicationTarget.Secure, err = strconv.ParseBool(r.FormValue("secure")); err != nil {
 		err = fmt.Errorf("parse secure field error ! %v", err)
+	}
+
+	return
+}
+
+func parseVolReplicationRemoveParams(r *http.Request) (volume, id string, err error) {
+	if volume = r.FormValue("sourceVolume"); !volNameRegexp.MatchString(volume) {
+		err = errors.New("source vol name can only be number and letters")
+		return
+	}
+	if id = r.FormValue("id"); len(id) == 0 {
+		err = errors.New("replication target id must be specified")
+		return
 	}
 
 	return

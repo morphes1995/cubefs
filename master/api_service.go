@@ -2374,7 +2374,6 @@ func (m *Server) volReplicationTargetAdd(w http.ResponseWriter, r *http.Request)
 		err               error
 		authKey           string
 		id                string
-		exists            bool
 		replicationTarget proto.ReplicationTarget
 		vol               *Vol
 	)
@@ -2393,9 +2392,9 @@ func (m *Server) volReplicationTargetAdd(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	id, exists = vol.getReplicationTargetID(&replicationTarget)
-	if exists {
-		sendOkReply(w, r, newSuccessHTTPReply(id))
+	id, err = vol.getReplicationTargetID(&replicationTarget)
+	if err != nil {
+		sendErrReply(w, r, &proto.HTTPReply{Code: proto.ErrCodeBadReplicationTarget, Msg: err.Error()})
 		return
 	}
 	replicationTarget.ID = id
@@ -2420,6 +2419,44 @@ func (m *Server) volReplicationTargetAdd(w http.ResponseWriter, r *http.Request)
 	}
 
 	sendOkReply(w, r, newSuccessHTTPReply(id))
+}
+
+func (m *Server) volReplicationTargetRemove(w http.ResponseWriter, r *http.Request) {
+	var (
+		err      error
+		targetId string
+		volume   string
+		vol      *Vol
+	)
+	metric := exporter.NewTPCnt(apiToMetricsName(proto.AdminVolReplicationTargetRemove))
+	defer func() {
+		doStatAndMetric(proto.AdminVolReplicationTargetRemove, metric, err, map[string]string{exporter.Vol: volume})
+	}()
+
+	if volume, targetId, err = parseVolReplicationRemoveParams(r); err != nil {
+		sendErrReply(w, r, &proto.HTTPReply{Code: proto.ErrCodeParamError, Msg: err.Error()})
+		return
+	}
+
+	if vol, err = m.cluster.getVol(volume); err != nil {
+		sendErrReply(w, r, &proto.HTTPReply{Code: proto.ErrCodeVolNotExists, Msg: err.Error()})
+		return
+	}
+
+	oldArgs := getVolVarargs(vol)
+	if err = vol.removeReplicationTarget(targetId); err != nil {
+		sendErrReply(w, r, newErrHTTPReply(err))
+		return
+	}
+
+	if err = m.cluster.syncUpdateVol(vol); err != nil {
+		setVolFromArgs(oldArgs, vol)
+		log.LogErrorf("action[updateVol] vol[%v] err[%v]", volume, err)
+		sendErrReply(w, r, newErrHTTPReply(err))
+		return
+	}
+
+	sendOkReply(w, r, newSuccessHTTPReply("replication target removed successfully \n"))
 }
 
 func (m *Server) volExpand(w http.ResponseWriter, r *http.Request) {
@@ -2731,6 +2768,7 @@ func (m *Server) getVolSimpleInfo(w http.ResponseWriter, r *http.Request) {
 
 func newSimpleView(vol *Vol) (view *proto.SimpleVolView) {
 	var (
+		err            error
 		volInodeCount  uint64
 		volDentryCount uint64
 	)
@@ -2797,6 +2835,14 @@ func newSimpleView(vol *Vol) (view *proto.SimpleVolView) {
 		EnableAutoDpMetaRepair:  vol.EnableAutoMetaRepair.Load(),
 		AccessTimeInterval:      vol.AccessTimeValidInterval,
 		EnablePersistAccessTime: vol.EnablePersistAccessTime,
+	}
+
+	if len(vol.replicationTargets) > 0 {
+		var replicationTargetsData []byte
+		if replicationTargetsData, err = json.Marshal(vol.replicationTargets); err != nil {
+			log.LogWarnf("error when serialize replication target of vol [%v],err :%v", vol.Name, err.Error())
+		}
+		view.ReplicationTargets = replicationTargetsData
 	}
 
 	vol.uidSpaceManager.rwMutex.RLock()

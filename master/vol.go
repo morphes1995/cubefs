@@ -21,6 +21,7 @@ import (
 	"math"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1762,7 +1763,7 @@ func (vol *Vol) checkDataReplicaMeta(c *Cluster) (cnt int) {
 	return
 }
 
-func (vol *Vol) getReplicationTargetID(target *proto.ReplicationTarget) (id string, exist bool) {
+func (vol *Vol) getReplicationTargetID(target *proto.ReplicationTarget) (id string, err error) {
 	vol.volLock.RLock()
 	defer vol.volLock.RUnlock()
 
@@ -1770,10 +1771,39 @@ func (vol *Vol) getReplicationTargetID(target *proto.ReplicationTarget) (id stri
 		if existTarget.TargetVolume == target.TargetVolume &&
 			target.URL().String() == target.URL().String() &&
 			existTarget.AccessKey == target.AccessKey {
-			return existTarget.ID, true
+
+			if existTarget.Prefix == target.Prefix {
+				return existTarget.ID, fmt.Errorf("target already exist, id: %s", existTarget.ID)
+			}
+			if strings.HasPrefix(existTarget.Prefix, target.Prefix) || strings.HasPrefix(target.Prefix, existTarget.Prefix) {
+				return existTarget.ID, fmt.Errorf("bad bucket prefix which interact target(%s) which has a prefix %s", existTarget.ID, existTarget.Prefix)
+			}
+
 		}
 
 	}
 	u, _ := uuid2.NewUUID()
-	return u.String(), false
+	return u.String(), nil
+}
+
+func (vol *Vol) removeReplicationTarget(id string) (err error) {
+	vol.volLock.Lock()
+	defer vol.volLock.Unlock()
+
+	var newTargets []*proto.ReplicationTarget
+	exist := false
+	for _, target := range vol.replicationTargets {
+		if target.ID == id {
+			exist = true
+			continue
+		}
+		newTargets = append(newTargets, target)
+	}
+
+	if !exist {
+		return errors.New("replication target " + id + " didn't exist")
+	}
+
+	vol.replicationTargets = newTargets
+	return
 }

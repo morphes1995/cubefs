@@ -472,17 +472,15 @@ func (mw *MetaWrapper) updateReplicationTargets(targets []byte) {
 		deleteTargetsID []string
 	)
 
-	if targets == nil || len(targets) == 0 {
-		return
+	newTargetsID = make(map[string]struct{})
+	if targets != nil && len(targets) > 0 {
+		if err = json.Unmarshal(targets, &newTargets); err != nil {
+			return
+		}
 	}
 
 	mw.rtLock.Lock()
 	defer mw.rtLock.Unlock()
-
-	newTargetsID = make(map[string]struct{}, len(targets))
-	if err = json.Unmarshal(targets, &newTargets); err != nil {
-		return
-	}
 
 	for _, target := range newTargets {
 		newTargetsID[target.ID] = struct{}{}
@@ -531,10 +529,23 @@ func (mw *MetaWrapper) ShouldObjectReplicated(path, replicationStatus string) (s
 	mw.rtLock.RLock()
 	defer mw.rtLock.RUnlock()
 
-	for id, _ := range mw.replicationTargets {
-		// TODO add more filter criteria
+	for id, w := range mw.replicationTargets {
+		if !strings.HasPrefix(path, w.TargetConfig.Prefix) {
+			continue
+		}
+
 		satisfiedIDS = append(satisfiedIDS, id)
 	}
 
+	return
+}
+
+func (mw *MetaWrapper) GetPrefixes() (prefixes []string) {
+	mw.rtLock.RLock()
+	defer mw.rtLock.RUnlock()
+
+	for _, w := range mw.replicationTargets {
+		prefixes = append(prefixes, w.TargetConfig.Prefix)
+	}
 	return
 }

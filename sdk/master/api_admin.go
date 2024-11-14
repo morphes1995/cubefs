@@ -325,7 +325,7 @@ func stdout(format string, a ...interface{}) {
 }
 
 func (api *AdminAPI) VolReplicationTargetAdd(vv *proto.SimpleVolView, sourceVolName, endpoint, accessKey, secretKey,
-	targetVolume string, secure bool) (id string, err error) {
+	targetVolume, prefix string, secure bool) (id string, err error) {
 	request := newAPIRequest(http.MethodPost, proto.AdminVolReplicationTargetAdd)
 	request.addParam("sourceVolume", sourceVolName)
 	request.addParam("authKey", util.CalcAuthKey(vv.Owner))
@@ -333,6 +333,7 @@ func (api *AdminAPI) VolReplicationTargetAdd(vv *proto.SimpleVolView, sourceVolN
 	request.addParam("accessKey", accessKey)
 	request.addParam("secretKey", secretKey)
 	request.addParam("targetVolume", targetVolume)
+	request.addParam("prefix", prefix)
 	request.addParam("secure", strconv.FormatBool(secure))
 	var resp []byte
 	if resp, err = api.mc.serveRequest(request); err != nil {
@@ -342,6 +343,16 @@ func (api *AdminAPI) VolReplicationTargetAdd(vv *proto.SimpleVolView, sourceVolN
 		return
 	}
 
+	return
+}
+
+func (api *AdminAPI) VolReplicationTargetRemove(volume string, id string) (err error) {
+	request := newAPIRequest(http.MethodPost, proto.AdminVolReplicationTargetRemove)
+	request.addParam("sourceVolume", volume)
+	request.addParam("id", id)
+	if _, err = api.mc.serveRequest(request); err != nil {
+		return
+	}
 	return
 }
 

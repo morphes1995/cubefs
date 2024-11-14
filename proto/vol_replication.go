@@ -25,6 +25,7 @@ type ReplicationTarget struct {
 	AccessKey       string `json:"accessKey"`
 	SecretKey       string `json:"SecretKey"`
 	TargetVolume    string `json:"targetVolume"`
+	Prefix          string `json:"Prefix"`
 	Region          string `json:"region,omitempty"`
 	Secure          bool   `json:"secure"`
 	ReplicationSync bool   `json:"replicationSync"`
