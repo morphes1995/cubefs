@@ -1369,7 +1369,7 @@ func (o *ObjectNode) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 	log.LogInfof("Audit: put object: requestID(%v) remote(%v) volume(%v) path(%v) type(%v)",
 		GetRequestID(r), getRequestIP(r), vol.Name(), param.Object(), contentType)
 
-	if targetIds := vol.shouldObjectReplicated(param.Object(), metadata); len(targetIds) > 0 {
+	if targetIds, _ := vol.shouldObjectReplicated(param.Object(), metadata); len(targetIds) > 0 {
 		metadata[VolumeReplicationStatus] = vol_replication.Pending.String()
 	}
 

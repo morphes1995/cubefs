@@ -296,6 +296,7 @@ const (
 func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 	var optTargetBucket string
 	var optPrefix string
+	var optSync bool
 	var cmd = &cobra.Command{
 		Use:   cmdVolReplicationAddUse,
 		Short: cmdVolReplicationAddShort,
@@ -311,7 +312,6 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 			//var Region               string
 			var secure bool
 			//var Arn                  string
-			//var ReplicationSync      bool
 			var sourceVolName = args[0]
 			var vv *proto.SimpleVolView
 			if vv, err = client.AdminAPI().GetVolumeSimpleInfo(sourceVolName); err != nil {
@@ -324,7 +324,7 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 				return
 			}
 
-			if id, err = client.AdminAPI().VolReplicationTargetAdd(vv, sourceVolName, endpoint, accessKey, secretKey, targetVolume, optPrefix, secure); err != nil {
+			if id, err = client.AdminAPI().VolReplicationTargetAdd(vv, sourceVolName, endpoint, accessKey, secretKey, targetVolume, optPrefix, optSync, secure); err != nil {
 				errout(err)
 				return
 			}
@@ -335,6 +335,7 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 
 	cmd.Flags().StringVar(&optTargetBucket, "target-bucket", "", "Specify target bucket which the data will be replicated to")
 	cmd.Flags().StringVar(&optPrefix, "prefix", "", "Specify the prefix the object path start with which should to be replicated")
+	cmd.Flags().BoolVar(&optSync, "sync", false, "Replication synchronize or not, default false")
 	return cmd
 }
 
@@ -384,7 +385,7 @@ func replicationTargetListStr(targets []proto.ReplicationTarget) string {
 		sb.WriteString(fmt.Sprintf("  AccessKey    : %v\n", target.AccessKey))
 		sb.WriteString(fmt.Sprintf("  SecretKey    : %v\n", target.SecretKey))
 		sb.WriteString(fmt.Sprintf("  Sync         : %v\n", target.ReplicationSync))
-		sb.WriteString(fmt.Sprintf("  Status       : %v\n", target.Status))
+		sb.WriteString(fmt.Sprintf("  Status       : %v\n", "enabled"))
 		sb.WriteString(fmt.Sprintf("\n"))
 	}
 
@@ -414,7 +415,7 @@ func newVolReplicationRemoveCmd(client *master.MasterClient) *cobra.Command {
 				errout(err)
 				return
 			}
-			stdout(targetID + " deleted successfully")
+			stdout(targetID + " deleted successfully\n")
 
 		},
 	}

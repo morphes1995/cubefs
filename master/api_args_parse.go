@@ -266,6 +266,10 @@ func parseVolReplicationAddParams(r *http.Request, authKey *string, replicationT
 	replicationTarget.Endpoint = r.FormValue("endpoint")
 	replicationTarget.AccessKey = r.FormValue("accessKey")
 	replicationTarget.SecretKey = r.FormValue("secretKey")
+
+	if replicationTarget.ReplicationSync, err = strconv.ParseBool(r.FormValue("sync")); err != nil {
+		err = fmt.Errorf("parse sync field error ! %v", err)
+	}
 	if replicationTarget.Secure, err = strconv.ParseBool(r.FormValue("secure")); err != nil {
 		err = fmt.Errorf("parse secure field error ! %v", err)
 	}

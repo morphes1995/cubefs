@@ -149,6 +149,8 @@ type Volume struct {
 	closeCh   chan struct{}
 
 	onAsyncTaskError AsyncTaskErrorFunc
+
+	replicationStat *ReplicationState
 }
 
 func (v *Volume) GetOwner() string {
@@ -3078,6 +3080,8 @@ func NewVolume(config *VolumeConfig) (*Volume, error) {
 		go v.syncOSSMeta()
 	}
 
+	v.replicationStat = NewReplicationState(v.closeCh, v)
+
 	return v, nil
 }
 
@@ -3197,21 +3201,28 @@ func (v *Volume) referenceExtentKey(oldInode, inode uint64) (bool, error) {
 
 func (v *Volume) tryReplicate(f *FSFileInfo) {
 	var (
-		err       error
-		targetIDs []string
-		attrInfo  *proto.XAttrInfo
+		err      error
+		attrInfo *proto.XAttrInfo
 	)
 
 	if attrInfo, err = v.mw.XAttrGetAll_ll(f.Inode); err != nil {
 		log.LogErrorf("tryReplicate: meta get xattr failed : volume(%v) path(%v) inode(%v) err(%v)", v.name, f.Path, f.Inode, err)
 		return
 	}
-	if targetIDs = v.shouldObjectReplicated(f.Path, attrInfo.XAttrs); len(targetIDs) > 0 {
-		v.replicateObject(f, attrInfo.XAttrs, targetIDs)
+	if targetIDs, sync := v.shouldObjectReplicated(f.Path, attrInfo.XAttrs); len(targetIDs) > 0 {
+		if sync {
+			v.replicateObject(f, attrInfo.XAttrs, targetIDs)
+		} else {
+			v.replicationStat.queueReplicaTask(ReplicateFileInfo{
+				FileInfo:  *f,
+				TargetIds: targetIDs,
+			})
+		}
+
 	}
 }
 
-func (v *Volume) shouldObjectReplicated(objPath string, meta map[string]string) (targetIds []string) {
+func (v *Volume) shouldObjectReplicated(objPath string, meta map[string]string) (targetIds []string, sync bool) {
 	return v.mw.ShouldObjectReplicated(objPath, meta[VolumeReplicationStatus])
 }
 

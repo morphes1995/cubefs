@@ -279,7 +279,7 @@ func (t *ReplicationCheckTask) handleFile(dentry *proto.ScanDentry) (err error) 
 		return err
 	}
 
-	if targetIds := t.mw.ShouldObjectReplicated(dentry.Path, attrInfo.XAttrs[VolumeReplicationStatus]); len(targetIds) > 0 {
+	if targetIds, _ := t.mw.ShouldObjectReplicated(dentry.Path, attrInfo.XAttrs[VolumeReplicationStatus]); len(targetIds) > 0 {
 		atomic.AddInt64(&t.statistics.FailedObjectsDetected, 1)
 
 		inodeInfo, err = t.mw.InodeGet_ll(dentry.Inode)

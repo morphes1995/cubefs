@@ -519,7 +519,7 @@ func (mw *MetaWrapper) updateReplicationTargets(targets []byte) {
 	return
 }
 
-func (mw *MetaWrapper) ShouldObjectReplicated(path, replicationStatus string) (satisfiedIDS []string) {
+func (mw *MetaWrapper) ShouldObjectReplicated(path, replicationStatus string) (satisfiedIDS []string, sync bool) {
 	if replicationStatus != "" &&
 		replicationStatus != vol_replication.Failed.String() &&
 		replicationStatus != vol_replication.Pending.String() {
@@ -528,13 +528,15 @@ func (mw *MetaWrapper) ShouldObjectReplicated(path, replicationStatus string) (s
 
 	mw.rtLock.RLock()
 	defer mw.rtLock.RUnlock()
-
 	for id, w := range mw.replicationTargets {
 		if !strings.HasPrefix(path, w.TargetConfig.Prefix) {
 			continue
 		}
 
 		satisfiedIDS = append(satisfiedIDS, id)
+		if w.TargetConfig.ReplicationSync {
+			sync = true
+		}
 	}
 
 	return
