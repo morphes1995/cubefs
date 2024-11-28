@@ -144,6 +144,10 @@ func (t *ReplicationCheckTask) Start() (err error) {
 		currentPath = strings.Join(prefixDirs, pathSep)
 	}
 
+	// 1. check deletion replication
+	t.tryHealDeletion()
+
+	// 2. check object replication
 	firstDentry = &proto.ScanDentry{
 		Inode: parentId,
 		Path:  strings.TrimPrefix(currentPath, pathSep),
@@ -429,4 +433,26 @@ func (t *ReplicationCheckTask) GetScanStartPrefix() (commonPrefix string) {
 	}
 
 	return prefixes[0]
+}
+
+func (t *ReplicationCheckTask) tryHealDeletion() {
+	var deletedDentries []*proto.DeletedDentryInfo
+	var err error
+	if deletedDentries, err = t.mw.ListAllDeletedDentries(); err != nil {
+		return
+	}
+	atomic.AddInt64(&t.statistics.FailedDeletion, int64(len(deletedDentries)))
+	if !t.dryRun {
+		for _, dentry := range deletedDentries {
+			if targetIds, _ := t.mw.ShouldObjectReplicated(dentry.Path, ""); len(targetIds) > 0 {
+				if err = ReplicateDeletion(t.mw, dentry.Inode, t.Volume, dentry.Path, targetIds); err == nil {
+					// deletion replicated successfully
+					atomic.AddInt64(&t.statistics.FailedDeletionHealed, 1)
+				}
+			}
+		}
+	}
+
+	// update statistics
+	t.currStatC <- *t.statistics
 }

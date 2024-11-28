@@ -911,6 +911,12 @@ func (v *Volume) DeletePath(path string) (err error) {
 	if err != nil {
 		return
 	}
+	now := time.Now().Unix()
+	if targetIds, _ := v.shouldObjectReplicated(path, ""); len(targetIds) > 0 {
+		if err = v.mw.AppendDeletedDentry(ino, path, now); err != nil {
+			return
+		}
+	}
 
 	if err = v.ec.EvictStream(ino); err != nil {
 		log.LogWarnf("DeletePath EvictStream: path(%v) inode(%v)", path, ino)
@@ -925,6 +931,9 @@ func (v *Volume) DeletePath(path string) (err error) {
 	if err = v.mw.Evict(ino, path); err != nil {
 		log.LogWarnf("DeletePath Evict: path(%v) inode(%v)", path, ino)
 	}
+
+	v.tryReplicateDeletion(ino, parent, path, now)
+
 	err = nil
 	return
 }
@@ -3209,7 +3218,7 @@ func (v *Volume) tryReplicate(f *FSFileInfo) {
 		log.LogErrorf("tryReplicate: meta get xattr failed : volume(%v) path(%v) inode(%v) err(%v)", v.name, f.Path, f.Inode, err)
 		return
 	}
-	if targetIDs, sync := v.shouldObjectReplicated(f.Path, attrInfo.XAttrs); len(targetIDs) > 0 {
+	if targetIDs, sync := v.shouldObjectReplicated(f.Path, attrInfo.XAttrs[VolumeReplicationStatus]); len(targetIDs) > 0 {
 		if sync {
 			v.replicateObject(f, attrInfo.XAttrs, targetIDs)
 		} else {
@@ -3222,8 +3231,8 @@ func (v *Volume) tryReplicate(f *FSFileInfo) {
 	}
 }
 
-func (v *Volume) shouldObjectReplicated(objPath string, meta map[string]string) (targetIds []string, sync bool) {
-	return v.mw.ShouldObjectReplicated(objPath, meta[VolumeReplicationStatus])
+func (v *Volume) shouldObjectReplicated(objPath string, replicaStatus string) (targetIds []string, sync bool) {
+	return v.mw.ShouldObjectReplicated(objPath, replicaStatus)
 }
 
 func (v *Volume) replicateObject(f *FSFileInfo, metaData map[string]string, targetIDs []string) {
@@ -3277,4 +3286,20 @@ func (v *Volume) replicateObject(f *FSFileInfo, metaData map[string]string, targ
 	}
 	wg.Wait()
 
+}
+
+func (v *Volume) tryReplicateDeletion(inode, parentIno uint64, path string, deletionTime int64) {
+	if targetIDs, sync := v.shouldObjectReplicated(path, ""); len(targetIDs) > 0 {
+		if sync {
+			ReplicateDeletion(v.mw, inode, v.name, path, targetIDs)
+		} else {
+			v.replicationStat.queueDeletionTask(DeletionInfo{
+				Path:      path,
+				ParentIno: parentIno,
+				Inode:     inode,
+				Time:      deletionTime,
+				TargetIds: targetIDs,
+			})
+		}
+	}
 }

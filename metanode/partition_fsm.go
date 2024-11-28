@@ -472,6 +472,18 @@ func (mp *metaPartition) Apply(command []byte, index uint64) (resp interface{}, 
 			return
 		}
 		resp = mp.fsmSyncInodeAccessTime(ino)
+	case opFSMAppendDeletedDentry:
+		deletedDentry := &proto.DeletedDentryInfo{}
+		if err = json.Unmarshal(msg.V, deletedDentry); err != nil {
+			return
+		}
+		resp = mp.fsmAppendDeletedDentry(deletedDentry)
+	case opFSMRemoveDeletedDentry:
+		deletedDentry := &proto.DeletedDentryInfo{}
+		if err = json.Unmarshal(msg.V, deletedDentry); err != nil {
+			return
+		}
+		resp = mp.fsmRemoveDeletedDentry(deletedDentry)
 	}
 
 	return

@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/cubefs/cubefs/sdk/meta/vol_replication"
+	"github.com/cubefs/cubefs/util/exporter"
 	"github.com/cubefs/cubefs/util/s3"
 	"strings"
 	"sync"
@@ -549,5 +550,162 @@ func (mw *MetaWrapper) GetPrefixes() (prefixes []string) {
 	for _, w := range mw.replicationTargets {
 		prefixes = append(prefixes, w.TargetConfig.Prefix)
 	}
+	return
+}
+
+func (mw *MetaWrapper) AppendDeletedDentry(ino uint64, path string, t int64) (err error) {
+	mp := mw.getPartitionByInode(ino)
+	if mp == nil {
+		return syscall.ENOENT
+	}
+
+	req := &proto.AppendDeletedEntryRequest{
+		PartitionID: mp.PartitionID,
+		Inode:       ino,
+		Path:        path,
+		Time:        t,
+	}
+
+	packet := proto.NewPacketReqID()
+	packet.Opcode = proto.OpMetaAppendDeletedDentry
+	packet.PartitionID = mp.PartitionID
+	err = packet.MarshalData(req)
+	if err != nil {
+		log.LogErrorf("AppendDeletedDentry: req(%v) err(%v)", *req, err)
+		return
+	}
+
+	metric := exporter.NewTPCnt(packet.GetOpMsg())
+	defer func() {
+		metric.SetWithLabels(err, map[string]string{exporter.Vol: mw.volname})
+	}()
+
+	packet, err = mw.sendToMetaPartition(mp, packet)
+	if err != nil {
+		log.LogErrorf("AppendDeletedDentry: packet(%v) mp(%v) req(%v) err(%v)", packet, mp, *req, err)
+		return
+	}
+
+	status := parseStatus(packet.ResultCode)
+	if status != statusOK {
+		err = errors.New(packet.GetResultMsg())
+	}
+
+	return
+}
+
+func (mw *MetaWrapper) RemoveDeletedDentry(ino uint64, path string) (err error) {
+	mp := mw.getPartitionByInode(ino)
+	if mp == nil {
+		return syscall.ENOENT
+	}
+
+	req := &proto.RemoveDeletedEntryRequest{
+		PartitionID: mp.PartitionID,
+		Path:        path,
+	}
+
+	packet := proto.NewPacketReqID()
+	packet.Opcode = proto.OpMetaRemoveDeletedDentry
+	packet.PartitionID = mp.PartitionID
+	err = packet.MarshalData(req)
+	if err != nil {
+		log.LogErrorf("RemoveDeletedDentry: req(%v) err(%v)", *req, err)
+		return
+	}
+
+	metric := exporter.NewTPCnt(packet.GetOpMsg())
+	defer func() {
+		metric.SetWithLabels(err, map[string]string{exporter.Vol: mw.volname})
+	}()
+
+	packet, err = mw.sendToMetaPartition(mp, packet)
+	if err != nil {
+		log.LogErrorf("AppendDeletedDentry: packet(%v) mp(%v) req(%v) err(%v)", packet, mp, *req, err)
+		return
+	}
+
+	status := parseStatus(packet.ResultCode)
+	if status != statusOK {
+		err = errors.New(packet.GetResultMsg())
+	}
+
+	return
+}
+
+func (mw *MetaWrapper) ListAllDeletedDentries() (result []*proto.DeletedDentryInfo, err error) {
+	dentries := make([][]*proto.DeletedDentryInfo, len(mw.partitions))
+	errors := make([]error, len(mw.partitions))
+	var wg sync.WaitGroup
+	i := 0
+	for _, mp := range mw.partitions {
+		wg.Add(1)
+		go func(mp *MetaPartition) {
+			defer wg.Done()
+			partitionDentries, err := mw.listDeletedDentries(mp)
+			if err != nil {
+				log.LogErrorf("listDeletedDentries fail when list partition %v: partitionId(%v)", mp.PartitionID)
+				errors[i] = err
+				return
+			}
+
+			dentries[i] = partitionDentries
+			i++
+		}(mp)
+	}
+	wg.Wait()
+
+	for _, partitionDentries := range dentries {
+		result = append(result, partitionDentries...)
+	}
+
+	for _, e := range errors {
+		if e != nil {
+			err = e
+			return // failed
+		}
+	}
+
+	return
+}
+
+func (mw *MetaWrapper) listDeletedDentries(mp *MetaPartition) (partitionDentries []*proto.DeletedDentryInfo, err error) {
+	req := &proto.ListDeletedEntryRequest{
+		PartitionID: mp.PartitionID,
+	}
+
+	packet := proto.NewPacketReqID()
+	packet.Opcode = proto.OpMetaListDeletedDentries
+	packet.PartitionID = mp.PartitionID
+	err = packet.MarshalData(req)
+	if err != nil {
+		log.LogErrorf("listDeletedDentries: req(%v) err(%v)", *req, err)
+		return
+	}
+
+	metric := exporter.NewTPCnt(packet.GetOpMsg())
+	defer func() {
+		metric.SetWithLabels(err, map[string]string{exporter.Vol: mw.volname})
+	}()
+
+	packet, err = mw.sendToMetaPartition(mp, packet)
+	if err != nil {
+		log.LogErrorf("listDeletedDentries: packet(%v) mp(%v) req(%v) err(%v)", packet, mp, *req, err)
+		return
+	}
+
+	status := parseStatus(packet.ResultCode)
+	if status != statusOK {
+		err = errors.New(packet.GetResultMsg())
+		return
+	}
+
+	resp := new(proto.ListDeletedEntryResponse)
+	err = packet.UnmarshalData(resp)
+	if err != nil {
+		log.LogErrorf("listDeletedDentries: packet(%v) mp(%v) err(%v) PacketData(%v)", packet, mp, err, string(packet.Data))
+		return
+	}
+	partitionDentries = resp.DeletedDentries
 	return
 }

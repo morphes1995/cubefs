@@ -491,8 +491,11 @@ func printHealProgress(stat proto.ScanStatistics, firstPrint bool) {
 	type printStat struct {
 		DirScannedNum         int64 `table:"dir scanned"`
 		FileScannedNum        int64 `table:"file scanned"`
-		FailedObjectsDetected int64 `table:"file failed to replicate"`
+		FailedObjectsDetected int64 `table:"file replication failed"`
 		FailedObjectsHealed   int64 `table:"file replication healed"`
+
+		FailedDeletion       int64 `table:"deletion replication failed"`
+		FailedDeletionHealed int64 `table:"deletion replication healed"`
 	}
 
 	if !firstPrint {
@@ -503,6 +506,8 @@ func printHealProgress(stat proto.ScanStatistics, firstPrint bool) {
 		FileScannedNum:        stat.FileScannedNum,
 		FailedObjectsDetected: stat.FailedObjectsDetected,
 		FailedObjectsHealed:   stat.FailedObjectsHealed,
+		FailedDeletion:        stat.FailedDeletion,
+		FailedDeletionHealed:  stat.FailedDeletionHealed,
 	}})
 }
 

@@ -10,8 +10,17 @@ type ReplicateFileInfo struct {
 	TargetIds []string
 }
 
+type DeletionInfo struct {
+	ParentIno uint64
+	Inode     uint64
+	Path      string
+	Time      int64
+	TargetIds []string
+}
+
 type ReplicationState struct {
 	replicationCh chan ReplicateFileInfo
+	deletionCh    chan DeletionInfo
 }
 
 func (r *ReplicationState) queueReplicaTask(info ReplicateFileInfo) {
@@ -26,13 +35,26 @@ func (r *ReplicationState) queueReplicaTask(info ReplicateFileInfo) {
 	}
 }
 
+func (r *ReplicationState) queueDeletionTask(info DeletionInfo) {
+	if r == nil {
+		return
+	}
+	select {
+	case r.deletionCh <- info:
+	default:
+		log.LogErrorf("discard deletion (inode:%v, path:%v) when async deletion, because the deletion chan is full ",
+			info.Inode, info.Path)
+	}
+}
+
 func NewReplicationState(closeCh chan struct{}, volume *Volume) *ReplicationState {
 	rs := &ReplicationState{
-		replicationCh: make(chan ReplicateFileInfo, 10000),
+		replicationCh: make(chan ReplicateFileInfo, 100000),
+		deletionCh:    make(chan DeletionInfo, 100000),
 	}
 
 	// add background groutines to deal with replication tasks
-	workerNum := runtime.GOMAXPROCS(0) / 4
+	workerNum := runtime.GOMAXPROCS(0) / 2
 	if workerNum == 0 {
 		workerNum = 1
 	}
@@ -54,6 +76,23 @@ func NewReplicationState(closeCh chan struct{}, volume *Volume) *ReplicationStat
 						log.LogErrorf("err when asynchronous replicate in background groutine: volume(%v) path(%v) inode(%v) err(%v)",
 							volume.name, f.Path, f.Inode, err)
 					}
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < workerNum; i++ {
+		go func() {
+			for {
+				select {
+				case <-closeCh:
+					return
+				case deletionInfo, ok := <-rs.deletionCh:
+					if !ok {
+						// chan closed
+						return
+					}
+					ReplicateDeletion(volume.mw, deletionInfo.Inode, volume.name, deletionInfo.Path, deletionInfo.TargetIds)
 				}
 			}
 		}()

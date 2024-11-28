@@ -232,6 +232,12 @@ type OpMultiVersion interface {
 	checkByMasterVerlist(mpVerList *proto.VolVersionInfoList, masterVerList *proto.VolVersionInfoList) (err error)
 }
 
+type OpDeletedDentries interface {
+	AppendDeletedDentry(req *proto.AppendDeletedEntryRequest, p *Packet) error
+	RemoveDeletedDentry(req *proto.RemoveDeletedEntryRequest, p *Packet) error
+	ListDeletedDentries(p *Packet) error
+}
+
 // OpMeta defines the interface for the metadata operations.
 type OpMeta interface {
 	OpInode
@@ -243,6 +249,7 @@ type OpMeta interface {
 	OpTransaction
 	OpQuota
 	OpMultiVersion
+	OpDeletedDentries
 }
 
 // OpPartition defines the interface for the partition operations.
@@ -488,13 +495,15 @@ type OpQuota interface {
 //	+-----+             +-------+
 type metaPartition struct {
 	config                  *MetaPartitionConfig
-	size                    uint64                // For partition all file size
-	applyID                 uint64                // Inode/Dentry max applyID, this index will be update after restoring from the dumped data.
-	storedApplyId           uint64                // update after store snapshot to disk
-	dentryTree              *BTree                // btree for dentries
-	inodeTree               *BTree                // btree for inodes
-	extendTree              *BTree                // btree for inode extend (XAttr) management
-	multipartTree           *BTree                // collection for multipart management
+	size                    uint64                              // For partition all file size
+	applyID                 uint64                              // Inode/Dentry max applyID, this index will be update after restoring from the dumped data.
+	storedApplyId           uint64                              // update after store snapshot to disk
+	dentryTree              *BTree                              // btree for dentries
+	inodeTree               *BTree                              // btree for inodes
+	extendTree              *BTree                              // btree for inode extend (XAttr) management
+	multipartTree           *BTree                              // collection for multipart management
+	deletedDentries         map[string]*proto.DeletedDentryInfo // deleted dentries that didn't be replicated, path -> dentry
+	deletedDentriesLock     sync.RWMutex
 	txProcessor             *TransactionProcessor // transction processor
 	raftPartition           raftstore.Partition
 	stopC                   chan bool
@@ -879,20 +888,21 @@ func (mp *metaPartition) getRaftPort() (heartbeat, replica int, err error) {
 // NewMetaPartition creates a new meta partition with the specified configuration.
 func NewMetaPartition(conf *MetaPartitionConfig, manager *metadataManager) MetaPartition {
 	mp := &metaPartition{
-		config:        conf,
-		dentryTree:    NewBtree(),
-		inodeTree:     NewBtree(),
-		extendTree:    NewBtree(),
-		multipartTree: NewBtree(),
-		stopC:         make(chan bool),
-		storeChan:     make(chan *storeMsg, 100),
-		freeList:      newFreeList(),
-		extDelCh:      make(chan []proto.ExtentKey, defaultDelExtentsCnt),
-		extReset:      make(chan struct{}),
-		vol:           NewVol(),
-		manager:       manager,
-		uniqChecker:   newUniqChecker(),
-		verSeq:        conf.VerSeq,
+		config:          conf,
+		dentryTree:      NewBtree(),
+		inodeTree:       NewBtree(),
+		extendTree:      NewBtree(),
+		multipartTree:   NewBtree(),
+		deletedDentries: make(map[string]*proto.DeletedDentryInfo),
+		stopC:           make(chan bool),
+		storeChan:       make(chan *storeMsg, 100),
+		freeList:        newFreeList(),
+		extDelCh:        make(chan []proto.ExtentKey, defaultDelExtentsCnt),
+		extReset:        make(chan struct{}),
+		vol:             NewVol(),
+		manager:         manager,
+		uniqChecker:     newUniqChecker(),
+		verSeq:          conf.VerSeq,
 		multiVersionList: &proto.VolVersionInfoList{
 			TemporaryVerMap: make(map[uint64]*proto.VolVersionInfo),
 		},
@@ -1171,6 +1181,7 @@ func (mp *metaPartition) store(sm *storeMsg) (err error) {
 		mp.storeTxRbDentry,
 		mp.storeUniqChecker,
 		mp.storeMultiVersion,
+		// todo
 	}
 	for _, storeFunc := range storeFuncs {
 		var crc uint32

@@ -16,6 +16,10 @@ type ScanStatistics struct {
 	ErrorSkippedNum       int64
 	FailedObjectsDetected int64
 	FailedObjectsHealed   int64
+
+	FailedDeletion        int64
+	FailedDeletionHealed  int64
+	FailedDeletionSkipped int64
 }
 
 type ReplicationTarget struct {

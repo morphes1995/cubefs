@@ -101,7 +101,7 @@ func (o *ObjectNode) createMultipleUploadHandler(w http.ResponseWriter, r *http.
 	// Checking user-defined metadata
 	metadata := ParseUserDefinedMetadata(r.Header)
 
-	if targetIds, _ := vol.shouldObjectReplicated(param.Object(), metadata); len(targetIds) > 0 {
+	if targetIds, _ := vol.shouldObjectReplicated(param.Object(), metadata[VolumeReplicationStatus]); len(targetIds) > 0 {
 		metadata[VolumeReplicationStatus] = vol_replication.Pending.String()
 	}
 

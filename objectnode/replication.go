@@ -313,3 +313,40 @@ func buildMultipartUploadInput(path string, w *meta.ReplicationWrapper, metaData
 
 	return input, nil
 }
+
+func ReplicateDeletion(mw *meta.MetaWrapper, inode uint64, volume, path string, targetIDs []string) (err error) {
+	var w *meta.ReplicationWrapper
+
+	w, err = mw.GetClient(targetIDs[0])
+	if err != nil {
+		return
+	}
+
+	//var (
+	//	err      error
+	//	attrInfo *proto.XAttrInfo
+	//)
+
+	//if attrInfo, err = v.mw.XAttrGetAll_ll(inode); err != nil {
+	//	log.LogErrorf("tryReplicateDeletion: meta get xattr failed : volume(%v) path(%v) inode(%v) err(%v)", v.name, path, inode, err)
+	//	return
+	//}
+	// todo head object to get mtime/md5sum
+
+	_, err = w.Client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(w.TargetConfig.TargetVolume),
+		Key:    aws.String(path),
+	})
+
+	if err != nil {
+		log.LogErrorf("replicateDeletion failed : volume(%v) path(%v) err(%v)", volume, path, err)
+		return
+	}
+	// deletion replicated successfully
+	if err = mw.RemoveDeletedDentry(inode, path); err != nil {
+		log.LogErrorf("RemoveDeletedDentry failed : volume(%v) path(%v) err(%v)", volume, path, err)
+	}
+
+	return
+
+}
