@@ -1,18 +1,12 @@
 package objectnode
 
 import (
-	"fmt"
 	"github.com/cubefs/cubefs/proto"
 	"github.com/cubefs/cubefs/sdk/data/stream"
 	"github.com/cubefs/cubefs/sdk/meta"
-	"github.com/cubefs/cubefs/sdk/meta/vol_replication"
-	"github.com/cubefs/cubefs/util"
-	"github.com/cubefs/cubefs/util/exporter"
 	"github.com/cubefs/cubefs/util/log"
-	"io"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -24,11 +18,14 @@ const (
 
 func NewReplicationCheckTask(masters []string, volume string, dryRun bool, currStatC chan proto.ScanStatistics, stopC chan bool) (*ReplicationCheckTask, error) {
 	var err error
+	var v *Volume
+
 	metaConfig := &meta.MetaConfig{
-		Volume:        volume,
-		Masters:       masters,
-		Authenticate:  false,
-		ValidateOwner: false,
+		Volume:                  volume,
+		Masters:                 masters,
+		Authenticate:            false,
+		ValidateOwner:           false,
+		FetchVolReplicationInfo: true,
 	}
 
 	var mw *meta.MetaWrapper
@@ -49,8 +46,14 @@ func NewReplicationCheckTask(masters []string, volume string, dryRun bool, currS
 		return nil, err
 	}
 
+	vm := NewVolumeManager(masters, true)
+	if v, err = vm.Volume(volume); err != nil {
+		return nil, err
+	}
+
 	task := &ReplicationCheckTask{
-		Volume:       volume,
+		vm:           vm,
+		Volume:       v,
 		mw:           mw,
 		extentClient: extentClient,
 		C:            make(chan *proto.ScanDentry, 10000),
@@ -65,7 +68,8 @@ func NewReplicationCheckTask(masters []string, volume string, dryRun bool, currS
 }
 
 type ReplicationCheckTask struct {
-	Volume string
+	Volume *Volume
+	vm     *VolumeManager
 
 	mw           *meta.MetaWrapper
 	extentClient *stream.ExtentClient
@@ -144,9 +148,6 @@ func (t *ReplicationCheckTask) Start() (err error) {
 		currentPath = strings.Join(prefixDirs, pathSep)
 	}
 
-	// 1. check deletion replication
-	t.tryHealDeletion()
-
 	// 2. check object replication
 	firstDentry = &proto.ScanDentry{
 		Inode: parentId,
@@ -157,7 +158,7 @@ func (t *ReplicationCheckTask) Start() (err error) {
 	prefix := t.GetScanStartPrefix()
 	// traverse directory
 	go func() {
-		res := t.traverse(firstDentry, prefix)
+		res := t.startHeal(firstDentry, prefix)
 		t.statistics.TraverseDone = true
 		if res {
 			t.statistics.TraverseStatus = "success"
@@ -283,19 +284,12 @@ func (t *ReplicationCheckTask) handleFile(dentry *proto.ScanDentry) (err error) 
 		return err
 	}
 
-	if targetIds, _ := t.mw.ShouldObjectReplicated(dentry.Path, attrInfo.XAttrs[VolumeReplicationStatus]); len(targetIds) > 0 {
+	if targetIds, _ := t.Volume.shouldObjectReplicated(dentry.Path, attrInfo.XAttrs[VolumeReplicationStatus]); len(targetIds) > 0 {
 		atomic.AddInt64(&t.statistics.FailedObjectsDetected, 1)
 
-		inodeInfo, err = t.mw.InodeGet_ll(dentry.Inode)
+		inodeInfo, err = t.Volume.mw.InodeGet_ll(dentry.Inode)
 		if err != nil {
 			log.LogErrorf("FailedReplicationScanner.BatchHandleFiles: meta get inode info failed : volume(%v) path(%v) inode(%v) err(%v)", t.Volume, dentry.Path, dentry.Inode, err)
-			return err
-		}
-
-		inode := inodeInfo.Inode
-		var allAttr *proto.XAttrInfo
-		if allAttr, err = t.mw.XAttrGetAll_ll(inode); err != nil {
-			log.LogErrorf("FailedReplicationScanner.BatchHandleFiles: meta get xattr failed : volume(%v) path(%v) inode(%v) err(%v)", t.Volume, dentry.Path, inode, err)
 			return err
 		}
 
@@ -303,131 +297,17 @@ func (t *ReplicationCheckTask) handleFile(dentry *proto.ScanDentry) (err error) 
 			return nil
 		}
 
-		if err = t.replicateObject(t.Volume, dentry, inodeInfo, allAttr.XAttrs, targetIds); err != nil {
+		if err = t.Volume.replicateObject(dentry.Path, inodeInfo.Inode, inodeInfo.Size, attrInfo.XAttrs, targetIds); err != nil {
 			return err
 		}
+		atomic.AddInt64(&t.statistics.FailedObjectsHealed, 1)
 	}
 
-	return nil
-}
-
-func (t *ReplicationCheckTask) replicateObject(volume string, dentry *proto.ScanDentry, inodeInfo *proto.InodeInfo, metaData map[string]string, targetIds []string) (err error) {
-	etagStr, exist := metaData[XAttrKeyOSSETag]
-	etag := ParseETagValue(etagStr)
-	if !exist {
-		return fmt.Errorf("key XAttrKeyOSSETag doesn't exist")
-	}
-
-	if err = t.extentClient.OpenStream(inodeInfo.Inode); err != nil {
-		log.LogErrorf("FailedReplicationScanner.replicateObject: data open stream fail, Inode(%v) err(%v)", inodeInfo.Inode, err)
-		return err
-	}
-	defer func() {
-		if closeErr := t.extentClient.CloseStream(inodeInfo.Inode); closeErr != nil {
-			log.LogErrorf("FailedReplicationScanner.replicateObject: data close stream fail: inode(%v) err(%v)", inodeInfo, closeErr)
-		}
-	}()
-
-	var wg sync.WaitGroup
-	var w *meta.ReplicationWrapper
-
-	size := inodeInfo.Size
-
-	for _, id := range targetIds {
-		w, err = t.mw.GetClient(id)
-		if err != nil {
-			continue
-		}
-
-		wg.Add(1)
-		go func(w *meta.ReplicationWrapper) {
-			defer wg.Done()
-			reader, writer := io.Pipe()
-			go func() {
-				err = t.read(volume, inodeInfo.Inode, size, dentry.Path, writer, 0, size)
-				if err != nil {
-					log.LogErrorf("replicateObject: read srcObj err(%v): srcVol(%v) path(%v)",
-						err, volume, dentry.Path)
-					return
-				}
-				writer.CloseWithError(err)
-			}()
-
-			replicationStatus := vol_replication.Failed
-			if etag.PartNum > 0 {
-				//  object was uploaded in parts
-				err = ReplicateMultiPartsObject(volume, dentry.Path, int64(size), w, metaData, reader)
-			} else {
-				// object was uploaded in whole
-				err = ReplicateObject(volume, dentry.Path, int64(size), etag.ETag(), w, metaData, reader)
-			}
-
-			if err == nil {
-				replicationStatus = vol_replication.Complete
-			}
-
-			// update object replication status form Pending to Complete/Failed
-			if err = t.mw.XAttrSet_ll(inodeInfo.Inode, []byte(VolumeReplicationStatus), []byte(replicationStatus.String())); err != nil {
-				log.LogErrorf("FailedReplicationScanner.replicateObject: failed update object[%v/%v]'s replication status to [%v] ", volume, dentry.Path, replicationStatus.String())
-				return
-			}
-
-			if replicationStatus == vol_replication.Complete {
-				atomic.AddInt64(&t.statistics.FailedObjectsHealed, int64(1))
-			}
-
-		}(w)
-	}
-	wg.Wait()
-
-	return
-}
-
-func (t *ReplicationCheckTask) read(volume string, inode, inodeSize uint64, path string, writer io.Writer, offset, size uint64) error {
-	upper := size + offset
-	if upper > inodeSize {
-		upper = inodeSize - offset
-	}
-
-	var n int
-	tmp := make([]byte, 2*util.BlockSize)
-	for {
-		rest := upper - offset
-		if rest == 0 {
-			break
-		}
-		readSize := len(tmp)
-		if uint64(readSize) > rest {
-			readSize = int(rest)
-		}
-		off, err := safeConvertUint64ToInt(offset)
-		if err != nil {
-			return err
-		}
-		n, err = t.extentClient.Read(inode, tmp, off, readSize)
-		if err != nil && err != io.EOF {
-			log.LogErrorf("ReadFile: data read fail: volume(%v) path(%v) inode(%v) offset(%v) size(%v) err(%v)",
-				volume, path, inode, offset, size, err)
-			exporter.Warning(fmt.Sprintf("read data fail: volume(%v) path(%v) inode(%v) offset(%v) size(%v) err(%v)",
-				volume, path, inode, offset, readSize, err))
-			return err
-		}
-		if n > 0 {
-			if _, err = writer.Write(tmp[:n]); err != nil {
-				return err
-			}
-			offset += uint64(n)
-		}
-		if n == 0 || err == io.EOF {
-			break
-		}
-	}
 	return nil
 }
 
 func (t *ReplicationCheckTask) GetScanStartPrefix() (commonPrefix string) {
 	prefixes := t.mw.GetPrefixes()
-
 	if len(prefixes) == 0 {
 		return
 	}
@@ -445,7 +325,7 @@ func (t *ReplicationCheckTask) tryHealDeletion() {
 	if !t.dryRun {
 		for _, dentry := range deletedDentries {
 			if targetIds, _ := t.mw.ShouldObjectReplicated(dentry.Path, ""); len(targetIds) > 0 {
-				if err = ReplicateDeletion(t.mw, dentry.Inode, t.Volume, dentry.Path, targetIds); err == nil {
+				if err = ReplicateDeletion(t.mw, dentry.Inode, t.Volume.name, dentry.Path, targetIds); err == nil {
 					// deletion replicated successfully
 					atomic.AddInt64(&t.statistics.FailedDeletionHealed, 1)
 				}
@@ -453,6 +333,11 @@ func (t *ReplicationCheckTask) tryHealDeletion() {
 		}
 	}
 
-	// update statistics
-	t.currStatC <- *t.statistics
+}
+
+func (t *ReplicationCheckTask) startHeal(dentry *proto.ScanDentry, prefix string) bool {
+	// check deletion replication
+	t.tryHealDeletion()
+	// check object replication status
+	return t.traverse(dentry, prefix)
 }

@@ -5256,11 +5256,12 @@ func (m *Server) getVol(w http.ResponseWriter, r *http.Request) {
 // Obtain the volume information such as total capacity and used space, etc.
 func (m *Server) getVolStatInfo(w http.ResponseWriter, r *http.Request) {
 	var (
-		err    error
-		name   string
-		ver    int
-		vol    *Vol
-		byMeta bool
+		err                 error
+		name                string
+		ver                 int
+		vol                 *Vol
+		byMeta              bool
+		fetchVolReplication bool
 	)
 
 	metric := exporter.NewTPCnt(apiToMetricsName(proto.ClientVolStat))
@@ -5268,7 +5269,7 @@ func (m *Server) getVolStatInfo(w http.ResponseWriter, r *http.Request) {
 		doStatAndMetric(proto.ClientVolStat, metric, err, map[string]string{exporter.Vol: name})
 	}()
 
-	if name, ver, byMeta, err = parseVolStatReq(r); err != nil {
+	if name, ver, byMeta, fetchVolReplication, err = parseVolStatReq(r); err != nil {
 		sendErrReply(w, r, &proto.HTTPReply{Code: proto.ErrCodeParamError, Msg: err.Error()})
 		return
 	}
@@ -5283,10 +5284,10 @@ func (m *Server) getVolStatInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendOkReply(w, r, newSuccessHTTPReply(volStat(vol, byMeta)))
+	sendOkReply(w, r, newSuccessHTTPReply(volStat(vol, byMeta, fetchVolReplication)))
 }
 
-func volStat(vol *Vol, countByMeta bool) (stat *proto.VolStatInfo) {
+func volStat(vol *Vol, countByMeta, fetchVolReplication bool) (stat *proto.VolStatInfo) {
 	var err error
 	stat = new(proto.VolStatInfo)
 	stat.Name = vol.Name
@@ -5315,7 +5316,7 @@ func volStat(vol *Vol, countByMeta bool) (stat *proto.VolStatInfo) {
 	stat.TrashInterval = vol.TrashInterval
 	log.LogDebugf("total[%v],usedSize[%v] TrashInterval[%v]", stat.TotalSize, stat.UsedSize, stat.TrashInterval)
 
-	if len(vol.replicationTargets) > 0 {
+	if len(vol.replicationTargets) > 0 && fetchVolReplication {
 		var replicationTargetsData []byte
 		if replicationTargetsData, err = json.Marshal(vol.replicationTargets); err != nil {
 			log.LogWarnf("error when serialize replication target of vol [%v],err :%v", vol.Name, err.Error())
@@ -5462,7 +5463,7 @@ func (m *Server) listVols(w http.ResponseWriter, r *http.Request) {
 				sendErrReply(w, r, newErrHTTPReply(proto.ErrVolNotExists))
 				return
 			}
-			stat := volStat(vol, false)
+			stat := volStat(vol, false, false)
 			volInfo := proto.NewVolInfo(vol.Name, vol.Owner, vol.createTime, vol.status(), stat.TotalSize,
 				stat.UsedSize, stat.DpReadOnlyWhenVolFull)
 			volsInfo = append(volsInfo, volInfo)

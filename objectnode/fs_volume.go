@@ -3003,10 +3003,11 @@ func (v *Volume) copyFile(parentID uint64, newFileName string, sourceFileInode u
 func NewVolume(config *VolumeConfig) (*Volume, error) {
 	var err error
 	metaConfig := &meta.MetaConfig{
-		Volume:        config.Volume,
-		Masters:       config.Masters,
-		Authenticate:  false,
-		ValidateOwner: false,
+		Volume:                  config.Volume,
+		Masters:                 config.Masters,
+		Authenticate:            false,
+		ValidateOwner:           false,
+		FetchVolReplicationInfo: true,
 		OnAsyncTaskError: func(err error) {
 			config.OnAsyncTaskError.OnError(err)
 		},
@@ -3220,10 +3221,12 @@ func (v *Volume) tryReplicate(f *FSFileInfo) {
 	}
 	if targetIDs, sync := v.shouldObjectReplicated(f.Path, attrInfo.XAttrs[VolumeReplicationStatus]); len(targetIDs) > 0 {
 		if sync {
-			v.replicateObject(f, attrInfo.XAttrs, targetIDs)
+			v.replicateObject(f.Path, f.Inode, uint64(f.Size), attrInfo.XAttrs, targetIDs)
 		} else {
 			v.replicationStat.queueReplicaTask(ReplicateFileInfo{
-				FileInfo:  *f,
+				Path:      f.Path,
+				Inode:     f.Inode,
+				Size:      uint64(f.Size),
 				TargetIds: targetIDs,
 			})
 		}
@@ -3235,57 +3238,50 @@ func (v *Volume) shouldObjectReplicated(objPath string, replicaStatus string) (t
 	return v.mw.ShouldObjectReplicated(objPath, replicaStatus)
 }
 
-func (v *Volume) replicateObject(f *FSFileInfo, metaData map[string]string, targetIDs []string) {
-	var wg sync.WaitGroup
+func (v *Volume) replicateObject(path string, inode, size uint64, metaData map[string]string, targetIDs []string) (err error) {
 	var w *meta.ReplicationWrapper
 
-	size, err := safeConvertInt64ToUint64(f.Size)
+	etagStr, exist := metaData[XAttrKeyOSSETag]
+	if !exist {
+		return fmt.Errorf("key XAttrKeyOSSETag doesn't exist")
+	}
+	etag := ParseETagValue(etagStr)
+
+	w, err = v.mw.GetClient(targetIDs[0])
 	if err != nil {
-		return
+		return err
 	}
 
-	for _, id := range targetIDs {
-		w, err = v.mw.GetClient(id)
+	reader, writer := io.Pipe()
+	go func() {
+		err = v.readFile(inode, size, path, writer, 0, size)
 		if err != nil {
-			continue
+			log.LogErrorf("replicateObject: read srcObj err(%v): srcVol(%v) path(%v)",
+				err, v.name, path)
 		}
+		writer.CloseWithError(err)
+	}()
 
-		wg.Add(1)
-		go func(w *meta.ReplicationWrapper) {
-			defer wg.Done()
-			reader, writer := io.Pipe()
-			go func() {
-				err = v.readFile(f.Inode, size, f.Path, writer, 0, size)
-				if err != nil {
-					log.LogErrorf("replicateObject: read srcObj err(%v): srcVol(%v) path(%v)",
-						err, v.name, f.Path)
-				}
-				writer.CloseWithError(err)
-			}()
-
-			replicationStatus := vol_replication.Complete
-			etag := ParseETagValue(f.ETag)
-			if etag.PartNum > 0 {
-				//  object was uploaded in parts
-				err = ReplicateMultiPartsObject(v.name, f.Path, f.Size, w, metaData, reader)
-			} else {
-				// object was uploaded in whole
-				err = ReplicateObject(v.name, f.Path, f.Size, f.ETag, w, metaData, reader)
-			}
-
-			if err != nil {
-				replicationStatus = vol_replication.Failed
-			}
-
-			// update object replication status form Pending to Complete/Failed
-			if err = v.SetXAttr(f.Path, VolumeReplicationStatus, []byte(replicationStatus.String()), false); err != nil {
-				log.LogErrorf("failed update object[%v/%v]'s replication status to [%v] ", v.name, f.Path, replicationStatus.String())
-			}
-
-		}(w)
+	replicationStatus := vol_replication.Complete
+	if etag.PartNum > 0 {
+		//  object was uploaded in parts
+		err = ReplicateMultiPartsObject(v.name, path, size, w, metaData, reader)
+	} else {
+		// object was uploaded in whole
+		err = ReplicateObject(v.name, path, size, etag.ETag(), w, metaData, reader)
 	}
-	wg.Wait()
 
+	if err != nil {
+		replicationStatus = vol_replication.Failed
+	}
+
+	// update object replication status form Pending to Complete/Failed
+	if updateErr := v.SetXAttr(path, VolumeReplicationStatus, []byte(replicationStatus.String()), false); updateErr != nil {
+		log.LogErrorf("failed update object[%v/%v]'s replication status to [%v] ", v.name, path, replicationStatus.String())
+		return updateErr
+	}
+
+	return err
 }
 
 func (v *Volume) tryReplicateDeletion(inode, parentIno uint64, path string, deletionTime int64) {

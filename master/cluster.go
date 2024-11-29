@@ -4914,7 +4914,7 @@ func (c *Cluster) listQuotaAll() (volsInfo []*proto.VolInfo) {
 	defer c.volMutex.RUnlock()
 	for _, vol := range c.vols {
 		if vol.quotaManager.HasQuota() {
-			stat := volStat(vol, false)
+			stat := volStat(vol, false, false)
 			volInfo := proto.NewVolInfo(vol.Name, vol.Owner, vol.createTime, vol.status(), stat.TotalSize,
 				stat.UsedSize, stat.DpReadOnlyWhenVolFull)
 			volsInfo = append(volsInfo, volInfo)

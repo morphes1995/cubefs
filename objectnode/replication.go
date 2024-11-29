@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-func ReplicateObject(volName string, path string, size int64, etagStr string, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (err error) {
+func ReplicateObject(volName string, path string, size uint64, etagStr string, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (err error) {
 	var out *s3.PutObjectOutput
 	var input *s3.PutObjectInput
 	var md5SumIsMatch bool
@@ -41,7 +41,7 @@ func ReplicateObject(volName string, path string, size int64, etagStr string, w 
 	return nil
 }
 
-func buildPutObjectInput(path string, size int64, etagStr string, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (input *s3.PutObjectInput, err error) {
+func buildPutObjectInput(path string, size uint64, etagStr string, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (input *s3.PutObjectInput, err error) {
 	var (
 		attrsCopy map[string]string
 		etagBytes []byte
@@ -60,7 +60,7 @@ func buildPutObjectInput(path string, size int64, etagStr string, w *meta.Replic
 		Bucket:        aws.String(w.TargetConfig.TargetVolume),
 		Key:           aws.String(path),
 		Body:          aws.ReadSeekCloser(reader),
-		ContentLength: aws.Int64(size),
+		ContentLength: aws.Int64(int64(size)),
 		Metadata:      map[string]*string{},
 	}
 
@@ -116,7 +116,7 @@ func buildPutObjectInput(path string, size int64, etagStr string, w *meta.Replic
 	return input, nil
 }
 
-func ReplicateMultiPartsObject(volName string, path string, size int64, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (err error) {
+func ReplicateMultiPartsObject(volName string, path string, size uint64, w *meta.ReplicationWrapper, metaData map[string]string, reader *io.PipeReader) (err error) {
 	var (
 		sizes     []uint64
 		totalSize uint64
@@ -142,7 +142,7 @@ func ReplicateMultiPartsObject(volName string, path string, size int64, w *meta.
 		sizes = append(sizes, s)
 		totalSize += s
 	}
-	if totalSize != uint64(size) {
+	if totalSize != size {
 		return fmt.Errorf("object %v/%v bad XAttrKeyOSSPartSizes, total size %v, actually is %v", volName, path, totalSize, size)
 
 	}

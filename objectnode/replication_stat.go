@@ -6,7 +6,9 @@ import (
 )
 
 type ReplicateFileInfo struct {
-	FileInfo  FSFileInfo
+	Inode     uint64
+	Path      string
+	Size      uint64
 	TargetIds []string
 }
 
@@ -31,7 +33,7 @@ func (r *ReplicationState) queueReplicaTask(info ReplicateFileInfo) {
 	case r.replicationCh <- info:
 	default:
 		log.LogErrorf("discard file (inode:%v, path:%v) when async replication, because the replication chan is full ",
-			info.FileInfo.Inode, info.FileInfo.Path)
+			info.Inode, info.Path)
 	}
 }
 
@@ -64,17 +66,16 @@ func NewReplicationState(closeCh chan struct{}, volume *Volume) *ReplicationStat
 				select {
 				case <-closeCh:
 					return
-				case replicateFileInfo, ok := <-rs.replicationCh:
+				case info, ok := <-rs.replicationCh:
 					if !ok {
 						// chan closed
 						return
 					}
-					f := replicateFileInfo.FileInfo
-					if attrInfo, err := volume.mw.XAttrGetAll_ll(f.Inode); err == nil {
-						volume.replicateObject(&f, attrInfo.XAttrs, replicateFileInfo.TargetIds)
+					if attrInfo, err := volume.mw.XAttrGetAll_ll(info.Inode); err == nil {
+						volume.replicateObject(info.Path, info.Inode, info.Size, attrInfo.XAttrs, info.TargetIds)
 					} else {
 						log.LogErrorf("err when asynchronous replicate in background groutine: volume(%v) path(%v) inode(%v) err(%v)",
-							volume.name, f.Path, f.Inode, err)
+							volume.name, info.Path, info.Inode, err)
 					}
 				}
 			}

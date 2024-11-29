@@ -159,7 +159,7 @@ const DefaultTrashInterval int64 = 10
 
 func (mw *MetaWrapper) updateVolStatInfo() (err error) {
 	var info *proto.VolStatInfo
-	if info, err = mw.mc.ClientAPI().GetVolumeStat(mw.volname); err != nil {
+	if info, err = mw.mc.ClientAPI().GetVolumeStat(mw.volname, mw.fetchVolReplicationInfo); err != nil {
 		log.LogWarnf("updateVolStatInfo: get volume status fail: volume(%v) err(%v)", mw.volname, err)
 		return
 	}
@@ -185,7 +185,9 @@ func (mw *MetaWrapper) updateVolStatInfo() (err error) {
 	}
 	log.LogInfof("VolStatInfo: info(%v), disableTrash(%v)", info, mw.disableTrash)
 
-	mw.updateReplicationTargets(info.ReplicationTargets)
+	if mw.fetchVolReplicationInfo {
+		mw.updateReplicationTargets(info.ReplicationTargets)
+	}
 
 	return
 }

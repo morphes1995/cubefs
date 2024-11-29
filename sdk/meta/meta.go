@@ -106,7 +106,8 @@ type MetaConfig struct {
 	TrashTraverseLimit         int
 	TrashRebuildGoroutineLimit int
 
-	VerReadSeq uint64
+	VerReadSeq              uint64
+	FetchVolReplicationInfo bool
 }
 
 type MetaWrapper struct {
@@ -194,6 +195,8 @@ type MetaWrapper struct {
 
 	replicationTargets map[string]*ReplicationWrapper
 	rtLock             sync.RWMutex
+
+	fetchVolReplicationInfo bool
 }
 
 type uniqidRange struct {
@@ -256,6 +259,7 @@ func NewMetaWrapper(config *MetaConfig) (*MetaWrapper, error) {
 	mw.dirCache = make(map[uint64]dirInfoCache)
 	mw.subDir = config.SubDir
 	limit := MaxMountRetryLimit
+	mw.fetchVolReplicationInfo = config.FetchVolReplicationInfo
 
 	mw.replicationTargets = make(map[string]*ReplicationWrapper, 0)
 

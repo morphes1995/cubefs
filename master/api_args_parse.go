@@ -1608,7 +1608,7 @@ func extractClientIDKey(r *http.Request) (clientIDKey string, err error) {
 	return
 }
 
-func parseVolStatReq(r *http.Request) (name string, ver int, byMeta bool, err error) {
+func parseVolStatReq(r *http.Request) (name string, ver int, byMeta, fetchVolReplication bool, err error) {
 	if err = r.ParseForm(); err != nil {
 		return
 	}
@@ -1626,6 +1626,12 @@ func parseVolStatReq(r *http.Request) (name string, ver int, byMeta bool, err er
 	if err != nil {
 		return
 	}
+
+	fetchVolReplication, err = extractBoolWithDefault(r, "fetchVolReplicationInfo", false)
+	if err != nil {
+		return
+	}
+
 	return
 }
 
