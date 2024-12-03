@@ -493,7 +493,7 @@ func (mw *MetaWrapper) updateReplicationTargets(targets []byte) {
 			// add new target
 			client := s3.CreateReplicationTargetClient(
 				target.Endpoint, target.AccessKey,
-				target.SecretKey, target.Secure)
+				target.SecretKey, target.Secure, target.Region)
 
 			_, err = client.HeadBucket(&awss3.HeadBucketInput{
 				Bucket: aws.String(target.TargetVolume),

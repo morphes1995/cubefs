@@ -324,12 +324,13 @@ func stdout(format string, a ...interface{}) {
 	_, _ = fmt.Fprintf(os.Stdout, format, a...)
 }
 
-func (api *AdminAPI) VolReplicationTargetAdd(vv *proto.SimpleVolView, sourceVolName, endpoint, accessKey, secretKey,
+func (api *AdminAPI) VolReplicationTargetAdd(vv *proto.SimpleVolView, sourceVolName, endpoint, region, accessKey, secretKey,
 	targetVolume, prefix string, optSync, secure bool) (id string, err error) {
 	request := newAPIRequest(http.MethodPost, proto.AdminVolReplicationTargetAdd)
 	request.addParam("sourceVolume", sourceVolName)
 	request.addParam("authKey", util.CalcAuthKey(vv.Owner))
 	request.addParam("endpoint", endpoint)
+	request.addParam("region", region)
 	request.addParam("accessKey", accessKey)
 	request.addParam("secretKey", secretKey)
 	request.addParam("targetVolume", targetVolume)

@@ -2401,7 +2401,7 @@ func (m *Server) volReplicationTargetAdd(w http.ResponseWriter, r *http.Request)
 
 	client := s3.CreateReplicationTargetClient(
 		replicationTarget.Endpoint, replicationTarget.AccessKey,
-		replicationTarget.SecretKey, replicationTarget.Secure)
+		replicationTarget.SecretKey, replicationTarget.Secure, replicationTarget.Region)
 	_, err = client.HeadBucket(&awss3.HeadBucketInput{
 		Bucket: aws.String(replicationTarget.TargetVolume),
 	})

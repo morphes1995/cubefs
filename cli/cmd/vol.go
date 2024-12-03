@@ -296,6 +296,7 @@ const (
 func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 	var optTargetBucket string
 	var optPrefix string
+	var optRegion string
 	var optSync bool
 	var cmd = &cobra.Command{
 		Use:   cmdVolReplicationAddUse,
@@ -309,7 +310,6 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 			var accessKey string
 			var secretKey string
 			var targetVolume string
-			//var Region               string
 			var secure bool
 			//var Arn                  string
 			var sourceVolName = args[0]
@@ -324,7 +324,12 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 				return
 			}
 
-			if id, err = client.AdminAPI().VolReplicationTargetAdd(vv, sourceVolName, endpoint, accessKey, secretKey, targetVolume, optPrefix, optSync, secure); err != nil {
+			if len(optRegion) == 0 {
+				errout(fmt.Errorf("region must be specified"))
+				return
+			}
+
+			if id, err = client.AdminAPI().VolReplicationTargetAdd(vv, sourceVolName, endpoint, optRegion, accessKey, secretKey, targetVolume, optPrefix, optSync, secure); err != nil {
 				errout(err)
 				return
 			}
@@ -334,6 +339,7 @@ func newVolReplicationAddCmd(client *master.MasterClient) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&optTargetBucket, "target-bucket", "", "Specify target bucket which the data will be replicated to")
+	cmd.Flags().StringVar(&optRegion, "region", "", "Specify region the bucket located at")
 	cmd.Flags().StringVar(&optPrefix, "prefix", "", "Specify the prefix the object path start with which should to be replicated")
 	cmd.Flags().BoolVar(&optSync, "sync", false, "Replication synchronize or not, default false")
 	return cmd

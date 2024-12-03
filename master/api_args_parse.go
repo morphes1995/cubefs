@@ -264,6 +264,7 @@ func parseVolReplicationAddParams(r *http.Request, authKey *string, replicationT
 
 	replicationTarget.Prefix = strings.TrimSuffix(strings.TrimPrefix(r.FormValue("prefix"), "/"), "/")
 	replicationTarget.Endpoint = r.FormValue("endpoint")
+	replicationTarget.Region = r.FormValue("region")
 	replicationTarget.AccessKey = r.FormValue("accessKey")
 	replicationTarget.SecretKey = r.FormValue("secretKey")
 
