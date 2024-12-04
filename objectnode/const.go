@@ -46,7 +46,8 @@ const (
 	Origin             = "Origin"
 	UserAgent          = "User-Agent"
 
-	VolumeReplicationStatus = "volume-replication-status"
+	VolumeReplicationStatus            = "Volume-Replication-Status"
+	VolumeReplicationReplicaCreateTime = "Volume-Replication-Replica-Create-Time"
 
 	AccessControlRequestMethod    = "Access-Control-Request-Method"
 	AccessControlRequestHeaders   = "Access-Control-Request-Headers"

@@ -6,10 +6,11 @@ import (
 )
 
 type ReplicateFileInfo struct {
-	Inode     uint64
-	Path      string
-	Size      uint64
-	TargetIds []string
+	Inode      uint64
+	Path       string
+	CreateTime int64
+	Size       uint64
+	TargetIds  []string
 }
 
 type DeletionInfo struct {
@@ -72,7 +73,7 @@ func NewReplicationState(closeCh chan struct{}, volume *Volume) *ReplicationStat
 						return
 					}
 					if attrInfo, err := volume.mw.XAttrGetAll_ll(info.Inode); err == nil {
-						volume.replicateObject(info.Path, info.Inode, info.Size, attrInfo.XAttrs, info.TargetIds)
+						volume.replicateObject(info.Path, info.Inode, info.Size, info.CreateTime, attrInfo.XAttrs, info.TargetIds)
 					} else {
 						log.LogErrorf("err when asynchronous replicate in background groutine: volume(%v) path(%v) inode(%v) err(%v)",
 							volume.name, info.Path, info.Inode, err)
@@ -93,7 +94,7 @@ func NewReplicationState(closeCh chan struct{}, volume *Volume) *ReplicationStat
 						// chan closed
 						return
 					}
-					ReplicateDeletion(volume.mw, deletionInfo.Inode, volume.name, deletionInfo.Path, deletionInfo.TargetIds)
+					ReplicateDeletion(volume.mw, deletionInfo.Inode, volume.name, deletionInfo.Path, deletionInfo.TargetIds, deletionInfo.Time)
 				}
 			}
 		}()

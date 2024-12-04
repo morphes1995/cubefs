@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/cubefs/cubefs/sdk/meta"
 	"github.com/cubefs/cubefs/sdk/meta/vol_replication"
@@ -314,7 +315,7 @@ func buildMultipartUploadInput(path string, w *meta.ReplicationWrapper, metaData
 	return input, nil
 }
 
-func ReplicateDeletion(mw *meta.MetaWrapper, inode uint64, volume, path string, targetIDs []string) (err error) {
+func ReplicateDeletion(mw *meta.MetaWrapper, inode uint64, volume, path string, targetIDs []string, deletedObjectCreateTime int64) (err error) {
 	var w *meta.ReplicationWrapper
 
 	w, err = mw.GetClient(targetIDs[0])
@@ -322,16 +323,29 @@ func ReplicateDeletion(mw *meta.MetaWrapper, inode uint64, volume, path string, 
 		return
 	}
 
-	//var (
-	//	err      error
-	//	attrInfo *proto.XAttrInfo
-	//)
+	var out *s3.HeadObjectOutput
+	out, err = w.Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(w.TargetConfig.TargetVolume),
+		Key:    aws.String(path),
+	})
 
-	//if attrInfo, err = v.mw.XAttrGetAll_ll(inode); err != nil {
-	//	log.LogErrorf("tryReplicateDeletion: meta get xattr failed : volume(%v) path(%v) inode(%v) err(%v)", v.name, path, inode, err)
-	//	return
-	//}
-	// todo head object to get mtime/md5sum
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case s3.ErrCodeNoSuchKey, "NotFound":
+				if err = mw.RemoveDeletedDentry(inode, path); err != nil {
+					log.LogErrorf("RemoveDeletedDentry failed : volume(%v) path(%v) err(%v)", volume, path, err)
+				}
+				return nil
+			default:
+				return err
+			}
+		}
+	}
+
+	if ok, err := validDeletionReplication(mw, out, inode, path, deletedObjectCreateTime); !ok {
+		return err
+	}
 
 	_, err = w.Client.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(w.TargetConfig.TargetVolume),
@@ -349,4 +363,29 @@ func ReplicateDeletion(mw *meta.MetaWrapper, inode uint64, volume, path string, 
 
 	return
 
+}
+
+func validDeletionReplication(mw *meta.MetaWrapper, out *s3.HeadObjectOutput, inode uint64, path string, deletedObjectCreateTime int64) (valid bool, err error) {
+
+	var targetObjectCreateTime int64
+	if objectCreateTimeStr, exist := out.Metadata[VolumeReplicationReplicaCreateTime]; exist {
+		if targetObjectCreateTime, err = strconv.ParseInt(*objectCreateTimeStr, 10, 64); err != nil {
+			return false, err
+		}
+	}
+
+	if targetObjectCreateTime == deletedObjectCreateTime {
+		return true, nil
+	} else if targetObjectCreateTime > deletedObjectCreateTime {
+		// stale deletion operation, we are trying to delete a newer object , abort
+		// deletion replicated successfully
+		if err = mw.RemoveDeletedDentry(inode, path); err != nil {
+			return false, err
+		}
+		return false, nil
+	} else {
+		// targetObjectCreateTime < deletedObjectCreateTime
+		// stale deletion operation, we are trying to delete an older object, need retry
+		return false, fmt.Errorf("stale deletion operation, we are trying to delete an older object(%v, createTime:%v), need retry", path, targetObjectCreateTime)
+	}
 }

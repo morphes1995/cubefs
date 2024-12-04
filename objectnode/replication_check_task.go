@@ -297,7 +297,7 @@ func (t *ReplicationCheckTask) handleFile(dentry *proto.ScanDentry) (err error) 
 			return nil
 		}
 
-		if err = t.Volume.replicateObject(dentry.Path, inodeInfo.Inode, inodeInfo.Size, attrInfo.XAttrs, targetIds); err != nil {
+		if err = t.Volume.replicateObject(dentry.Path, inodeInfo.Inode, inodeInfo.Size, inodeInfo.CreateTime.Unix(), attrInfo.XAttrs, targetIds); err != nil {
 			return err
 		}
 		atomic.AddInt64(&t.statistics.FailedObjectsHealed, 1)
@@ -325,7 +325,7 @@ func (t *ReplicationCheckTask) tryHealDeletion() {
 	if !t.dryRun {
 		for _, dentry := range deletedDentries {
 			if targetIds, _ := t.mw.ShouldObjectReplicated(dentry.Path, ""); len(targetIds) > 0 {
-				if err = ReplicateDeletion(t.mw, dentry.Inode, t.Volume.name, dentry.Path, targetIds); err == nil {
+				if err = ReplicateDeletion(t.mw, dentry.Inode, t.Volume.name, dentry.Path, targetIds, dentry.Time); err == nil {
 					// deletion replicated successfully
 					atomic.AddInt64(&t.statistics.FailedDeletionHealed, 1)
 				}

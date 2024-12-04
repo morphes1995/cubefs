@@ -21,6 +21,9 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/cubefs/cubefs/sdk/meta/vol_replication"
 	"hash"
 	"io"
@@ -903,17 +906,18 @@ func (v *Volume) DeletePath(path string) (err error) {
 	log.LogInfof("DeletePath: delete: volume(%v) path(%v) inode(%v)", v.name, path, ino)
 
 	// delete dentry with condition when objectlock is open
+	var inoInfo *proto.InodeInfo
 	if objetLock != nil {
-		_, err = v.mw.DeleteWithCond_ll(parent, ino, name, mode.IsDir(), path)
+		inoInfo, err = v.mw.DeleteWithCond_ll(parent, ino, name, mode.IsDir(), path)
 	} else {
-		_, err = v.mw.Delete_ll(parent, name, mode.IsDir(), path)
+		inoInfo, err = v.mw.Delete_ll(parent, name, mode.IsDir(), path)
 	}
 	if err != nil {
 		return
 	}
-	now := time.Now().Unix()
+
 	if targetIds, _ := v.shouldObjectReplicated(path, ""); len(targetIds) > 0 {
-		if err = v.mw.AppendDeletedDentry(ino, path, now); err != nil {
+		if err = v.mw.AppendDeletedDentry(ino, path, inoInfo.CreateTime.Unix()); err != nil {
 			return
 		}
 	}
@@ -932,7 +936,7 @@ func (v *Volume) DeletePath(path string) (err error) {
 		log.LogWarnf("DeletePath Evict: path(%v) inode(%v)", path, ino)
 	}
 
-	v.tryReplicateDeletion(ino, parent, path, now)
+	v.tryReplicateDeletion(ino, parent, path, inoInfo.CreateTime.Unix())
 
 	err = nil
 	return
@@ -3221,13 +3225,14 @@ func (v *Volume) tryReplicate(f *FSFileInfo) {
 	}
 	if targetIDs, sync := v.shouldObjectReplicated(f.Path, attrInfo.XAttrs[VolumeReplicationStatus]); len(targetIDs) > 0 {
 		if sync {
-			v.replicateObject(f.Path, f.Inode, uint64(f.Size), attrInfo.XAttrs, targetIDs)
+			v.replicateObject(f.Path, f.Inode, uint64(f.Size), f.CreateTime.Unix(), attrInfo.XAttrs, targetIDs)
 		} else {
 			v.replicationStat.queueReplicaTask(ReplicateFileInfo{
-				Path:      f.Path,
-				Inode:     f.Inode,
-				Size:      uint64(f.Size),
-				TargetIds: targetIDs,
+				Path:       f.Path,
+				Inode:      f.Inode,
+				CreateTime: f.CreateTime.Unix(),
+				Size:       uint64(f.Size),
+				TargetIds:  targetIDs,
 			})
 		}
 
@@ -3238,8 +3243,9 @@ func (v *Volume) shouldObjectReplicated(objPath string, replicaStatus string) (t
 	return v.mw.ShouldObjectReplicated(objPath, replicaStatus)
 }
 
-func (v *Volume) replicateObject(path string, inode, size uint64, metaData map[string]string, targetIDs []string) (err error) {
+func (v *Volume) replicateObject(path string, inode, size uint64, createTime int64, metaData map[string]string, targetIDs []string) (err error) {
 	var w *meta.ReplicationWrapper
+	var out *s3.HeadObjectOutput
 
 	etagStr, exist := metaData[XAttrKeyOSSETag]
 	if !exist {
@@ -3250,6 +3256,29 @@ func (v *Volume) replicateObject(path string, inode, size uint64, metaData map[s
 	w, err = v.mw.GetClient(targetIDs[0])
 	if err != nil {
 		return err
+	}
+
+	out, err = w.Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(w.TargetConfig.TargetVolume),
+		Key:    aws.String(path),
+	})
+
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case s3.ErrCodeNoSuchKey, "NotFound":
+			default:
+				return err
+			}
+		}
+	}
+
+	if _, exist = out.Metadata[VolumeReplicationReplicaCreateTime]; exist {
+		if existObjTime, err := strconv.ParseInt(*out.Metadata[VolumeReplicationReplicaCreateTime], 10, 64); err != nil {
+			return err
+		} else if existObjTime > createTime {
+			return fmt.Errorf("target volume has object: %v which create time (%v )is larger than the current one(%v) ", path, existObjTime, createTime)
+		}
 	}
 
 	reader, writer := io.Pipe()
@@ -3263,6 +3292,7 @@ func (v *Volume) replicateObject(path string, inode, size uint64, metaData map[s
 	}()
 
 	replicationStatus := vol_replication.Complete
+	metaData[VolumeReplicationReplicaCreateTime] = strconv.FormatInt(createTime, 10)
 	if etag.PartNum > 0 {
 		//  object was uploaded in parts
 		err = ReplicateMultiPartsObject(v.name, path, size, w, metaData, reader)
@@ -3284,16 +3314,16 @@ func (v *Volume) replicateObject(path string, inode, size uint64, metaData map[s
 	return err
 }
 
-func (v *Volume) tryReplicateDeletion(inode, parentIno uint64, path string, deletionTime int64) {
+func (v *Volume) tryReplicateDeletion(inode, parentIno uint64, path string, createTime int64) {
 	if targetIDs, sync := v.shouldObjectReplicated(path, ""); len(targetIDs) > 0 {
 		if sync {
-			ReplicateDeletion(v.mw, inode, v.name, path, targetIDs)
+			ReplicateDeletion(v.mw, inode, v.name, path, targetIDs, createTime)
 		} else {
 			v.replicationStat.queueDeletionTask(DeletionInfo{
 				Path:      path,
 				ParentIno: parentIno,
 				Inode:     inode,
-				Time:      deletionTime,
+				Time:      createTime,
 				TargetIds: targetIDs,
 			})
 		}
