@@ -1027,6 +1027,7 @@ const (
 	CRC_COUNT_TX_STUFF   int = 7
 	CRC_COUNT_UINQ_STUFF int = 8
 	CRC_COUNT_MULTI_VER  int = 9
+	CRC_COUNT_DDentry    int = 10
 )
 
 func (mp *metaPartition) LoadSnapshot(snapshotPath string) (err error) {
@@ -1043,7 +1044,7 @@ func (mp *metaPartition) LoadSnapshot(snapshotPath string) (err error) {
 	}
 
 	crc_count := len(crcs)
-	if crc_count != CRC_COUNT_BASIC && crc_count != CRC_COUNT_TX_STUFF && crc_count != CRC_COUNT_UINQ_STUFF && crc_count != CRC_COUNT_MULTI_VER {
+	if crc_count != CRC_COUNT_BASIC && crc_count != CRC_COUNT_TX_STUFF && crc_count != CRC_COUNT_UINQ_STUFF && crc_count != CRC_COUNT_MULTI_VER && crc_count != CRC_COUNT_DDentry {
 		log.LogErrorf("action[LoadSnapshot] crc array length %d not match", len(crcs))
 		return ErrSnapshotCrcMismatch
 	}
@@ -1068,6 +1069,12 @@ func (mp *metaPartition) LoadSnapshot(snapshotPath string) (err error) {
 		}
 	} else {
 		mp.storeMultiVersion(snapshotPath, &storeMsg{multiVerList: mp.multiVersionList.VerList})
+	}
+
+	if crc_count == CRC_COUNT_DDentry {
+		if err = mp.loadDeletedDentries(snapshotPath, crcs[CRC_COUNT_DDentry-1]); err != nil {
+			return
+		}
 	}
 
 	errs := make([]error, len(loadFuncs))
@@ -1181,7 +1188,7 @@ func (mp *metaPartition) store(sm *storeMsg) (err error) {
 		mp.storeTxRbDentry,
 		mp.storeUniqChecker,
 		mp.storeMultiVersion,
-		// todo
+		mp.storeDeletedDentry,
 	}
 	for _, storeFunc := range storeFuncs {
 		var crc uint32
@@ -1718,18 +1725,19 @@ func (mp *metaPartition) initTxInfo(txInfo *proto.TransactionInfo) error {
 
 func (mp *metaPartition) storeSnapshotFiles() (err error) {
 	msg := &storeMsg{
-		applyIndex:     mp.applyID,
-		txId:           mp.txProcessor.txManager.txIdAlloc.getTransactionID(),
-		inodeTree:      NewBtree(),
-		dentryTree:     NewBtree(),
-		extendTree:     NewBtree(),
-		multipartTree:  NewBtree(),
-		txTree:         NewBtree(),
-		txRbInodeTree:  NewBtree(),
-		txRbDentryTree: NewBtree(),
-		uniqId:         mp.GetUniqId(),
-		uniqChecker:    newUniqChecker(),
-		multiVerList:   mp.multiVersionList.VerList,
+		applyIndex:      mp.applyID,
+		txId:            mp.txProcessor.txManager.txIdAlloc.getTransactionID(),
+		inodeTree:       NewBtree(),
+		dentryTree:      NewBtree(),
+		extendTree:      NewBtree(),
+		multipartTree:   NewBtree(),
+		txTree:          NewBtree(),
+		txRbInodeTree:   NewBtree(),
+		txRbDentryTree:  NewBtree(),
+		uniqId:          mp.GetUniqId(),
+		uniqChecker:     newUniqChecker(),
+		multiVerList:    mp.multiVersionList.VerList,
+		deletedDentries: mp.GetDeletedDentries(),
 	}
 
 	return mp.store(msg)

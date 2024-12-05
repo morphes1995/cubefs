@@ -3,6 +3,7 @@ package metanode
 import (
 	"encoding/json"
 	"github.com/cubefs/cubefs/proto"
+	"sort"
 )
 
 func (mp *metaPartition) AppendDeletedDentry(req *proto.AppendDeletedEntryRequest, p *Packet) (err error) {
@@ -62,4 +63,18 @@ func (mp *metaPartition) ListDeletedDentries(p *Packet) (err error) {
 	p.PacketOkWithBody(reply)
 	return
 
+}
+
+func (mp *metaPartition) GetDeletedDentries() (infoList []*proto.DeletedDentryInfo) {
+	mp.deletedDentriesLock.RLock()
+	for _, v := range mp.deletedDentries {
+		infoList = append(infoList, v)
+	}
+
+	mp.deletedDentriesLock.RUnlock()
+
+	sort.SliceStable(infoList, func(i, j int) bool {
+		return infoList[i].Inode > infoList[j].Inode
+	})
+	return
 }
